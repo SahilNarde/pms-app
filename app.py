@@ -8,7 +8,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # --- CONFIGURATION ---
-SHEET_NAME = "Product_System_DB"  # Make sure your Google Sheet has this EXACT name
+SHEET_NAME = "PMS DB"  # Make sure your Google Sheet has this EXACT name
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
@@ -324,3 +324,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
