@@ -52,10 +52,27 @@ def load_data(tab_name):
         data = ws.get_all_records()
         df = pd.DataFrame(data)
         # Force all data to string to avoid NaN issues
-        return df.astype(str)
+        df = df.astype(str)
+        # Clean column headers (remove extra spaces)
+        df.columns = df.columns.str.strip()
+        return df
     except Exception as e:
         st.error(f"Error reading {tab_name}: {e}")
         return pd.DataFrame()
+
+def get_clean_list(df, column_name):
+    """Helper to extract a clean list of unique values from a column."""
+    if column_name not in df.columns:
+        return []
+    
+    # Get unique values
+    values = df[column_name].unique().tolist()
+    # Filter out garbage
+    clean_values = [
+        v.strip() for v in values 
+        if v and str(v).lower() not in ["", "nan", "none", "null"] and v.strip() != ""
+    ]
+    return sorted(list(set(clean_values)))
 
 def append_to_sheet(tab_name, data_dict):
     """Appends a single row."""
@@ -203,6 +220,7 @@ def main():
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
         
+        # 🛡️ SAFETY CHECK: Force Create Columns if they are missing
         required_sim_cols = ["SIM Number", "Provider", "Status", "Plan Details", "Entry Date", "Used In S/N"]
         for col in required_sim_cols:
             if col not in sim_df.columns: sim_df[col] = ""
@@ -238,9 +256,12 @@ def main():
             
             col_g1, col_g2 = st.columns(2)
             with col_g1:
+                # --- PIE CHART FIX ---
                 if "Industry Category" in prod_df.columns:
-                    # Clean data: Remove empty strings and whitespace
-                    clean_ind_df = prod_df[prod_df['Industry Category'].str.strip() != ""]
+                    # STRICT CLEANING: Remove 'nan', 'None', and whitespace
+                    clean_ind_df = prod_df.copy()
+                    clean_ind_df = clean_ind_df[~clean_ind_df['Industry Category'].isin(['nan', 'None', '', ' '])]
+                    
                     if not clean_ind_df.empty:
                         ind_counts = clean_ind_df['Industry Category'].value_counts().reset_index()
                         ind_counts.columns = ['Industry Category', 'Count']
@@ -307,10 +328,7 @@ def main():
         with c4:
             uid = st.text_input("Device UID")
             # Smart SIM Selection
-            avail_sims = []
-            if not sim_df.empty and "Status" in sim_df.columns:
-                avail_sims = sim_df[sim_df["Status"] == "Available"]["SIM Number"].tolist()
-            
+            avail_sims = get_clean_list(sim_df[sim_df["Status"] == "Available"], "SIM Number")
             sim_opts = ["None"] + avail_sims + ["➕ Add New SIM..."]
             sim_sel = st.selectbox("SIM Card", sim_opts)
 
@@ -334,43 +352,28 @@ def main():
         st.markdown("### 👥 Client & Partner")
         col_p, col_c, col_i, col_d = st.columns(4)
 
-        # 1. CHANNEL PARTNER
+        # 1. CHANNEL PARTNER (Smart Dropdown)
         with col_p:
-            avail_partners = []
-            if "Channel Partner" in prod_df.columns:
-                # Robust Filtering: Drop NA, convert to str, strip, filter non-empty
-                s_partners = prod_df["Channel Partner"].astype(str).str.strip()
-                avail_partners = sorted(s_partners[s_partners != ""].unique().tolist())
-            
+            avail_partners = get_clean_list(prod_df, "Channel Partner")
             partner_opts = ["Select..."] + avail_partners + ["➕ Create New..."]
             p_sel = st.selectbox("Channel Partner", partner_opts)
             final_partner = st.text_input("Enter Partner Name", placeholder="Type name...") if p_sel == "➕ Create New..." else (p_sel if p_sel != "Select..." else "")
 
-        # 2. CLIENT
+        # 2. CLIENT (Smart Dropdown)
         with col_c:
-            avail_clients = []
-            if "Client Name" in client_df.columns:
-                # Robust Filtering for Clients
-                s_clients = client_df["Client Name"].astype(str).str.strip()
-                avail_clients = sorted(s_clients[s_clients != ""].unique().tolist())
-            
+            avail_clients = get_clean_list(client_df, "Client Name")
             client_opts = ["Select..."] + avail_clients + ["➕ Create New..."]
             c_sel = st.selectbox("End User (Client)", client_opts)
             final_client = st.text_input("Enter Client Name", placeholder="Type name...") if c_sel == "➕ Create New..." else (c_sel if c_sel != "Select..." else "")
 
-        # 3. INDUSTRY
+        # 3. INDUSTRY (Smart Dropdown)
         with col_i:
-            avail_inds = []
-            if "Industry Category" in prod_df.columns:
-                # Robust Filtering for Industry
-                s_inds = prod_df["Industry Category"].astype(str).str.strip()
-                avail_inds = sorted(s_inds[s_inds != ""].unique().tolist())
-            
+            avail_inds = get_clean_list(prod_df, "Industry Category")
             ind_opts = ["Select..."] + avail_inds + ["➕ Create New..."]
             i_sel = st.selectbox("Industry", ind_opts)
             final_ind = st.text_input("Enter Industry", placeholder="Type category...") if i_sel == "➕ Create New..." else (i_sel if i_sel != "Select..." else "")
 
-        # 4. DATES
+        # 4. DATES (Compact)
         with col_d:
             install_d = st.date_input("Installation Date")
             valid = st.number_input("Validity (Months)", 1, 60, 12)
