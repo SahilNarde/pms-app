@@ -38,7 +38,6 @@ def get_worksheet(sheet_name, tab_name):
         sh = client.open(sheet_name)
         return sh.worksheet(tab_name)
     except Exception as e:
-        # Suppress initial connection errors to avoid UI clutter
         print(f"❌ Error opening tab '{tab_name}': {e}")
         return None
 
@@ -203,7 +202,6 @@ def main():
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
         
-        # 🛡️ SAFETY CHECK: Force Create Columns if they are missing
         required_sim_cols = ["SIM Number", "Provider", "Status", "Plan Details", "Entry Date", "Used In S/N"]
         for col in required_sim_cols:
             if col not in sim_df.columns: sim_df[col] = ""
@@ -212,6 +210,7 @@ def main():
         if "Client Name" not in client_df.columns: client_df["Client Name"] = ""
         if "Channel Partner" not in prod_df.columns: prod_df["Channel Partner"] = ""
         if "Industry Category" in prod_df.columns: prod_df["Industry Category"] = ""
+        if "Installation Date" not in prod_df.columns: prod_df["Installation Date"] = ""
 
     except Exception as e:
         st.error("⚠️ Data limit hit or connection error. Please wait a minute and click Refresh.")
@@ -236,12 +235,40 @@ def main():
             c4.metric("Expired", len(prod_df[prod_df['Status_Calc'] == "Expired"]))
             st.divider()
             
-            if "Industry Category" in prod_df.columns:
-                ind_counts = prod_df['Industry Category'].value_counts().reset_index()
-                ind_counts.columns = ['Industry Category', 'Count']
-                fig = px.pie(ind_counts, values='Count', names='Industry Category', title="Industry Distribution")
-                st.plotly_chart(fig)
+            # --- GRAPHS SECTION ---
+            col_g1, col_g2 = st.columns(2)
+            
+            with col_g1:
+                if "Industry Category" in prod_df.columns:
+                    # Filter out blank industry names to avoid incorrect graph
+                    clean_ind_df = prod_df[prod_df['Industry Category'].str.strip() != ""]
+                    if not clean_ind_df.empty:
+                        ind_counts = clean_ind_df['Industry Category'].value_counts().reset_index()
+                        ind_counts.columns = ['Industry Category', 'Count']
+                        fig_pie = px.pie(ind_counts, values='Count', names='Industry Category', title="Industry Distribution", hole=0.4)
+                        st.plotly_chart(fig_pie, use_container_width=True)
+                    else:
+                        st.info("No Industry data to display.")
 
+            with col_g2:
+                if "Installation Date" in prod_df.columns:
+                    # Parse dates, coercing errors to NaT
+                    trend_df = prod_df.copy()
+                    trend_df["Installation Date"] = pd.to_datetime(trend_df["Installation Date"], errors='coerce')
+                    # Remove invalid dates
+                    trend_df = trend_df.dropna(subset=["Installation Date"])
+                    
+                    if not trend_df.empty:
+                        # Group by Month
+                        trend_data = trend_df.groupby(trend_df["Installation Date"].dt.to_period("M")).size().reset_index(name="Installations")
+                        trend_data["Month"] = trend_data["Installation Date"].astype(str)
+                        
+                        fig_trend = px.area(trend_data, x="Month", y="Installations", title="Installation Growth (Monthly)", markers=True, color_discrete_sequence=["#00CC96"])
+                        st.plotly_chart(fig_trend, use_container_width=True)
+                    else:
+                        st.info("No Installation Dates found for growth chart.")
+
+            # --- ALERTS SECTION ---
             expiring = prod_df[prod_df['Status_Calc'].isin(["Expiring Soon", "Expired"])]
             if not expiring.empty:
                 st.warning("⚠️ Expiring / Expired Devices")
