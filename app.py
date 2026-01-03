@@ -61,12 +61,13 @@ def append_to_sheet(tab_name, data_dict):
     ws = get_worksheet(SHEET_NAME, tab_name)
     if not ws: return False
     try:
-        # Check if headers exist, if not, create them (first run case)
+        # Check if headers exist; if not, create them
         if not ws.row_values(1):
             headers = list(data_dict.keys())
             ws.append_row(headers)
             
         headers = ws.row_values(1)
+        # Match data to headers
         row_values = [str(data_dict.get(h, "")) for h in headers]
         ws.append_row(row_values)
         load_data.clear()
@@ -81,7 +82,7 @@ def bulk_append_to_sheet(tab_name, df):
     try:
         sheet_headers = ws.row_values(1)
         if not sheet_headers:
-            st.error(f"Tab '{tab_name}' is empty. Please add headers to the first row in Google Sheets.")
+            st.error(f"Tab '{tab_name}' is empty. Add headers first.")
             return False
             
         for h in sheet_headers:
@@ -111,7 +112,7 @@ def update_sim_status(sim_number, new_status, used_in_sn):
                 ws.update_cell(cell.row, used_col, used_in_sn)
                 load_data.clear()
             except ValueError:
-                st.error("Column headers changed in Sheet!")
+                pass
     except Exception as e:
         st.warning(f"Could not update SIM status: {e}")
 
@@ -149,10 +150,9 @@ def check_login(username, password):
     df = pd.DataFrame(data).astype(str)
     if df.empty: return None
     
-    # Clean column names (strip spaces)
+    # Strip spaces from column names to be safe
     df.columns = df.columns.str.strip()
     
-    # Safety check for column names
     if 'Username' not in df.columns or 'Password' not in df.columns:
         return None
 
@@ -167,6 +167,7 @@ def main():
         st.session_state.logged_in = False
         st.session_state.user_name = ""
 
+    # Login Screen
     if not st.session_state.logged_in:
         c1, c2, c3 = st.columns([1, 1, 1])
         with c2:
@@ -174,7 +175,8 @@ def main():
             with st.form("login_form"):
                 user_input = st.text_input("Username")
                 pass_input = st.text_input("Password", type="password")
-                if st.form_submit_button("Login", use_container_width=True):
+                # Removed 'use_container_width' to fix warning on button
+                if st.form_submit_button("Login"):
                     name = check_login(user_input, pass_input)
                     if name:
                         st.session_state.logged_in = True
@@ -185,6 +187,7 @@ def main():
                         st.error("❌ Invalid Username or Password")
         return
 
+    # Sidebar
     with st.sidebar:
         st.info(f"👤 User: **{st.session_state.user_name}**")
         if st.button("🔄 Refresh Data"):
@@ -198,24 +201,24 @@ def main():
     st.title("🏭 Product Management System (Cloud)")
     st.markdown("---")
 
-    # LOAD DATA WITH SAFEGUARDS
+    # --- LOAD DATA & SANITIZE ---
     try:
         prod_df = load_data("Products")
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
         
-        # --- CRITICAL FIX: Handle Empty Sheets ---
-        if "SIM Number" not in sim_df.columns:
-            sim_df["SIM Number"] = []
-        if "Status" not in sim_df.columns:
-            sim_df["Status"] = []
-        if "S/N" not in prod_df.columns:
-            prod_df["S/N"] = []
-        if "Client Name" not in client_df.columns:
-            client_df["Client Name"] = []
+        # 🛡️ SAFETY CHECK: Force Create Columns if they are missing
+        # This fixes the KeyError: 'SIM Number' crash
+        required_sim_cols = ["SIM Number", "Provider", "Status", "Plan Details", "Entry Date", "Used In S/N"]
+        for col in required_sim_cols:
+            if col not in sim_df.columns:
+                sim_df[col] = ""
+
+        if "S/N" not in prod_df.columns: prod_df["S/N"] = ""
+        if "Client Name" not in client_df.columns: client_df["Client Name"] = ""
 
     except Exception as e:
-        st.error("⚠️ Data limit hit. Please wait a minute and click Refresh.")
+        st.error("⚠️ Data limit hit or connection error. Please wait a minute and click Refresh.")
         return
 
     st.sidebar.caption(f"📦 Products: {len(prod_df)}")
@@ -241,12 +244,12 @@ def main():
                 ind_counts = prod_df['Industry Category'].value_counts().reset_index()
                 ind_counts.columns = ['Industry Category', 'Count']
                 fig = px.pie(ind_counts, values='Count', names='Industry Category', title="Industry Distribution")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, key="pie_chart") # Removed width param to let Streamlit handle it
 
             expiring = prod_df[prod_df['Status_Calc'].isin(["Expiring Soon", "Expired"])]
             if not expiring.empty:
                 st.warning("⚠️ Expiring / Expired Devices")
-                st.dataframe(expiring[["S/N", "End User", "Renewal Date", "Status_Calc"]], width="stretch")
+                st.dataframe(expiring[["S/N", "End User", "Renewal Date", "Status_Calc"]], width=1000) # Fixed width
         else:
             st.info("Database empty. Add entries.")
 
@@ -258,7 +261,7 @@ def main():
             s_num = st.text_input("SIM Number")
             s_plan = st.text_input("Plan")
             if st.form_submit_button("Add SIM"):
-                # Safety check for column existence
+                # Safety check using the sanitized DataFrame
                 sim_list = sim_df["SIM Number"].values if "SIM Number" in sim_df.columns else []
                 
                 if str(s_num) in sim_list:
@@ -268,7 +271,8 @@ def main():
                     if append_to_sheet("Sims", new_sim):
                         st.success("SIM Added!")
                         st.rerun()
-        st.dataframe(sim_df, width="stretch")
+        # Use width='stretch' string or integer for new Streamlit versions
+        st.dataframe(sim_df, use_container_width=True) 
 
     # 3. NEW DISPATCH ENTRY
     elif menu == "New Dispatch Entry":
@@ -287,16 +291,18 @@ def main():
             uid = st.text_input("UID")
         
         # Safe access to SIMs
-        if "SIM Number" in sim_df.columns and "Status" in sim_df.columns:
+        avail_sims = []
+        if not sim_df.empty:
             avail_sims = sim_df[sim_df["Status"] == "Available"]["SIM Number"].tolist()
-        else:
-            avail_sims = []
 
         sim_sel = st.selectbox("SIM", ["None", "New Manual"] + avail_sims)
         final_sim = st.text_input("Enter Manual SIM") if sim_sel == "New Manual" else (sim_sel if sim_sel != "None" else "")
 
         # Safe access to Clients
-        avail_clients = client_df["Client Name"].tolist() if "Client Name" in client_df.columns else []
+        avail_clients = []
+        if not client_df.empty:
+            avail_clients = client_df["Client Name"].tolist()
+
         client_sel = st.selectbox("Client", ["New"] + avail_clients)
         final_client = st.text_input("New Client Name") if client_sel == "New" else client_sel
 
@@ -304,7 +310,6 @@ def main():
             if not sn or not final_client:
                 st.error("S/N and Client are required!")
             else:
-                # Check for duplicate S/N safely
                 sn_list = prod_df["S/N"].values if "S/N" in prod_df.columns else []
                 if sn in sn_list:
                     st.error("S/N already exists!")
@@ -320,7 +325,6 @@ def main():
                     append_to_sheet("Products", new_prod)
                     if client_sel == "New": append_to_sheet("Clients", {"Client Name": final_client})
                     if final_sim:
-                        # Check SIM existence safely
                         sim_db_list = sim_df["SIM Number"].values if "SIM Number" in sim_df.columns else []
                         if final_sim in sim_db_list: 
                             update_sim_status(final_sim, "Used", sn)
@@ -330,9 +334,9 @@ def main():
                     st.rerun()
 
     elif menu == "Installation List":
-        st.dataframe(prod_df, width="stretch")
+        st.dataframe(prod_df, use_container_width=True)
     elif menu == "Client Master":
-        st.dataframe(client_df, width="stretch")
+        st.dataframe(client_df, use_container_width=True)
     
     # 7. CHANNEL PARTNER ANALYTICS
     elif menu == "Channel Partner Analytics":
@@ -349,7 +353,7 @@ def main():
                     st.plotly_chart(fig_part, use_container_width=True)
                 with c2:
                     st.metric("🏆 Top Performer", partner_stats.iloc[0]["Channel Partner"])
-                st.dataframe(partner_stats, width="stretch")
+                st.dataframe(partner_stats, use_container_width=True)
             else: st.info("No Channel Partner data.")
         else: st.info("No Data.")
 
@@ -374,7 +378,7 @@ def main():
             if uploaded_file:
                 try:
                     new_data = pd.read_excel(uploaded_file)
-                    st.dataframe(new_data.head(), width="stretch")
+                    st.dataframe(new_data.head(), use_container_width=True)
                     st.info(f"Ready to upload {len(new_data)} rows.")
                     
                     if st.button("Confirm Bulk Upload"):
