@@ -51,6 +51,7 @@ def load_data(tab_name):
     try:
         data = ws.get_all_records()
         df = pd.DataFrame(data)
+        # Force all data to string to avoid NaN issues
         return df.astype(str)
     except Exception as e:
         st.error(f"Error reading {tab_name}: {e}")
@@ -235,12 +236,10 @@ def main():
             c4.metric("Expired", len(prod_df[prod_df['Status_Calc'] == "Expired"]))
             st.divider()
             
-            # --- GRAPHS SECTION ---
             col_g1, col_g2 = st.columns(2)
-            
             with col_g1:
                 if "Industry Category" in prod_df.columns:
-                    # Filter out blank industry names to avoid incorrect graph
+                    # Clean data: Remove empty strings and whitespace
                     clean_ind_df = prod_df[prod_df['Industry Category'].str.strip() != ""]
                     if not clean_ind_df.empty:
                         ind_counts = clean_ind_df['Industry Category'].value_counts().reset_index()
@@ -248,27 +247,22 @@ def main():
                         fig_pie = px.pie(ind_counts, values='Count', names='Industry Category', title="Industry Distribution", hole=0.4)
                         st.plotly_chart(fig_pie, use_container_width=True)
                     else:
-                        st.info("No Industry data to display.")
+                        st.info("No Industry data available for chart.")
 
             with col_g2:
                 if "Installation Date" in prod_df.columns:
-                    # Parse dates, coercing errors to NaT
                     trend_df = prod_df.copy()
                     trend_df["Installation Date"] = pd.to_datetime(trend_df["Installation Date"], errors='coerce')
-                    # Remove invalid dates
                     trend_df = trend_df.dropna(subset=["Installation Date"])
                     
                     if not trend_df.empty:
-                        # Group by Month
                         trend_data = trend_df.groupby(trend_df["Installation Date"].dt.to_period("M")).size().reset_index(name="Installations")
                         trend_data["Month"] = trend_data["Installation Date"].astype(str)
-                        
                         fig_trend = px.area(trend_data, x="Month", y="Installations", title="Installation Growth (Monthly)", markers=True, color_discrete_sequence=["#00CC96"])
                         st.plotly_chart(fig_trend, use_container_width=True)
                     else:
-                        st.info("No Installation Dates found for growth chart.")
+                        st.info("No Installation Dates available for chart.")
 
-            # --- ALERTS SECTION ---
             expiring = prod_df[prod_df['Status_Calc'].isin(["Expiring Soon", "Expired"])]
             if not expiring.empty:
                 st.warning("⚠️ Expiring / Expired Devices")
@@ -320,16 +314,13 @@ def main():
             sim_opts = ["None"] + avail_sims + ["➕ Add New SIM..."]
             sim_sel = st.selectbox("SIM Card", sim_opts)
 
-        # SIM Logic (Conditional Display)
         final_sim_num = ""
         final_sim_prov = "VI"
         
         if sim_sel == "➕ Add New SIM...":
             c_s1, c_s2 = st.columns(2)
-            with c_s1:
-                final_sim_num = st.text_input("Enter New SIM Number")
-            with c_s2:
-                final_sim_prov = st.selectbox("Provider", ["VI", "AIRTEL", "JIO", "BSNL", "Other"])
+            with c_s1: final_sim_num = st.text_input("Enter New SIM Number")
+            with c_s2: final_sim_prov = st.selectbox("Provider", ["VI", "AIRTEL", "JIO", "BSNL", "Other"])
         elif sim_sel != "None":
             final_sim_num = sim_sel
             if not sim_df.empty:
@@ -341,60 +332,51 @@ def main():
 
         # --- SECTION 2: CLIENT & PARTNER ---
         st.markdown("### 👥 Client & Partner")
-        
         col_p, col_c, col_i, col_d = st.columns(4)
 
-        # 1. CHANNEL PARTNER (Smart Dropdown)
+        # 1. CHANNEL PARTNER
         with col_p:
             avail_partners = []
             if "Channel Partner" in prod_df.columns:
-                avail_partners = prod_df[prod_df["Channel Partner"] != ""]["Channel Partner"].unique().tolist()
+                # Robust Filtering: Drop NA, convert to str, strip, filter non-empty
+                s_partners = prod_df["Channel Partner"].astype(str).str.strip()
+                avail_partners = sorted(s_partners[s_partners != ""].unique().tolist())
             
-            partner_opts = ["Select..."] + sorted(avail_partners) + ["➕ Create New..."]
+            partner_opts = ["Select..."] + avail_partners + ["➕ Create New..."]
             p_sel = st.selectbox("Channel Partner", partner_opts)
-            
-            if p_sel == "➕ Create New...":
-                final_partner = st.text_input("Enter Partner Name", placeholder="Type name...")
-            else:
-                final_partner = p_sel if p_sel != "Select..." else ""
+            final_partner = st.text_input("Enter Partner Name", placeholder="Type name...") if p_sel == "➕ Create New..." else (p_sel if p_sel != "Select..." else "")
 
-        # 2. CLIENT (Smart Dropdown)
+        # 2. CLIENT
         with col_c:
             avail_clients = []
-            if not client_df.empty:
-                avail_clients = client_df["Client Name"].unique().tolist()
+            if "Client Name" in client_df.columns:
+                # Robust Filtering for Clients
+                s_clients = client_df["Client Name"].astype(str).str.strip()
+                avail_clients = sorted(s_clients[s_clients != ""].unique().tolist())
             
-            client_opts = ["Select..."] + sorted(avail_clients) + ["➕ Create New..."]
+            client_opts = ["Select..."] + avail_clients + ["➕ Create New..."]
             c_sel = st.selectbox("End User (Client)", client_opts)
-            
-            if c_sel == "➕ Create New...":
-                final_client = st.text_input("Enter Client Name", placeholder="Type name...")
-            else:
-                final_client = c_sel if c_sel != "Select..." else ""
+            final_client = st.text_input("Enter Client Name", placeholder="Type name...") if c_sel == "➕ Create New..." else (c_sel if c_sel != "Select..." else "")
 
-        # 3. INDUSTRY (Smart Dropdown)
+        # 3. INDUSTRY
         with col_i:
             avail_inds = []
             if "Industry Category" in prod_df.columns:
-                avail_inds = prod_df[prod_df["Industry Category"] != ""]["Industry Category"].unique().tolist()
+                # Robust Filtering for Industry
+                s_inds = prod_df["Industry Category"].astype(str).str.strip()
+                avail_inds = sorted(s_inds[s_inds != ""].unique().tolist())
             
-            ind_opts = ["Select..."] + sorted(avail_inds) + ["➕ Create New..."]
+            ind_opts = ["Select..."] + avail_inds + ["➕ Create New..."]
             i_sel = st.selectbox("Industry", ind_opts)
-            
-            if i_sel == "➕ Create New...":
-                final_ind = st.text_input("Enter Industry", placeholder="Type category...")
-            else:
-                final_ind = i_sel if i_sel != "Select..." else ""
+            final_ind = st.text_input("Enter Industry", placeholder="Type category...") if i_sel == "➕ Create New..." else (i_sel if i_sel != "Select..." else "")
 
-        # 4. DATES (Compact)
+        # 4. DATES
         with col_d:
             install_d = st.date_input("Installation Date")
             valid = st.number_input("Validity (Months)", 1, 60, 12)
             activ_d = st.date_input("Activation Date")
 
         st.markdown("---")
-        
-        # SAVE BUTTON
         if st.button("💾 Save Dispatch Entry", type="primary", use_container_width=True):
             missing_fields = []
             if not sn: missing_fields.append("S/N")
@@ -418,11 +400,9 @@ def main():
                     }
                     
                     if append_to_sheet("Products", new_prod):
-                        # Auto-save Client if new
                         if c_sel == "➕ Create New..." and final_client:
                              append_to_sheet("Clients", {"Client Name": final_client})
                         
-                        # Update/Add SIM
                         if final_sim_num:
                             sim_db_list = sim_df["SIM Number"].values if "SIM Number" in sim_df.columns else []
                             if final_sim_num in sim_db_list: 
