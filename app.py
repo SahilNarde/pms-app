@@ -38,6 +38,7 @@ def get_worksheet(sheet_name, tab_name):
         sh = client.open(sheet_name)
         return sh.worksheet(tab_name)
     except Exception as e:
+        # Suppress initial connection errors to avoid UI clutter
         print(f"❌ Error opening tab '{tab_name}': {e}")
         return None
 
@@ -61,6 +62,7 @@ def append_to_sheet(tab_name, data_dict):
     ws = get_worksheet(SHEET_NAME, tab_name)
     if not ws: return False
     try:
+        # If sheet is empty, add headers first
         if not ws.row_values(1):
             headers = list(data_dict.keys())
             ws.append_row(headers)
@@ -270,10 +272,11 @@ def main():
     elif menu == "New Dispatch Entry":
         st.subheader("📝 New Dispatch")
         
-        # --- ROW 1 ---
-        c1, c2, c3 = st.columns(3)
+        # --- SECTION 1: DEVICE DETAILS ---
+        st.markdown("### 🛠️ Device Details")
+        c1, c2, c3, c4 = st.columns(4)
         with c1:
-            sn = st.text_input("S/N (Required)")
+            sn = st.text_input("Product S/N (Required)")
             oem = st.text_input("OEM S/N")
         with c2:
             prod = st.selectbox("Product Name", BASE_PRODUCT_LIST)
@@ -281,78 +284,96 @@ def main():
         with c3:
             conn = st.selectbox("Connectivity", ["4G", "2G", "NB-IoT", "WiFi", "LoRaWAN"])
             cable = st.text_input("Cable Length")
-
-        # --- ROW 2 ---
-        c4, c5, c6 = st.columns(3)
         with c4:
-            install_d = st.date_input("Installation Date")
-            activ_d = st.date_input("Activation Date")
-        with c5:
-            valid = st.number_input("Validity (Months)", 1, 60, 12)
             uid = st.text_input("Device UID")
-        with c6:
-            # Smart Channel Partner Selection
-            avail_partners = []
-            if "Channel Partner" in prod_df.columns:
-                avail_partners = prod_df[prod_df["Channel Partner"] != ""]["Channel Partner"].unique().tolist()
-            
-            partner_mode = st.radio("Channel Partner", ["Existing", "New"], horizontal=True, label_visibility="collapsed")
-            if partner_mode == "Existing" and avail_partners:
-                final_partner = st.selectbox("Select Partner", avail_partners)
-            else:
-                final_partner = st.text_input("Enter Partner Name")
+            valid = st.number_input("Validity (Months)", 1, 60, 12)
+
+        # --- SECTION 2: DATES ---
+        st.markdown("### 📅 Installation Dates")
+        d1, d2 = st.columns(2)
+        with d1:
+            install_d = st.date_input("Installation Date")
+        with d2:
+            activ_d = st.date_input("Activation Date")
 
         st.divider()
 
-        # --- ROW 3 ---
-        c7, c8 = st.columns(2)
-        with c7:
-            # Smart SIM Selection
-            avail_sims = []
-            if not sim_df.empty and "Status" in sim_df.columns:
-                avail_sims = sim_df[sim_df["Status"] == "Available"]["SIM Number"].tolist()
+        # --- SECTION 3: SIM CARD ---
+        st.markdown("### 📡 SIM & Network")
+        
+        avail_sims = []
+        if not sim_df.empty and "Status" in sim_df.columns:
+            avail_sims = sim_df[sim_df["Status"] == "Available"]["SIM Number"].tolist()
 
-            sim_sel = st.selectbox("SIM Selection", ["None", "New Manual Entry"] + avail_sims)
-            
-            final_sim_num = ""
-            final_sim_prov = "VI" # Default
+        s1, s2 = st.columns([1, 1])
+        with s1:
+            sim_sel = st.selectbox("Select SIM", ["None", "New Manual Entry"] + avail_sims)
+        
+        final_sim_num = ""
+        final_sim_prov = "VI"
 
+        with s2:
             if sim_sel == "New Manual Entry":
-                final_sim_num = st.text_input("Enter SIM Number manually")
-                final_sim_prov = st.selectbox("Select Provider", ["VI", "AIRTEL", "JIO", "BSNL", "Other"])
+                c_sim1, c_sim2 = st.columns(2)
+                with c_sim1:
+                    final_sim_num = st.text_input("Enter SIM Number")
+                with c_sim2:
+                    final_sim_prov = st.selectbox("Provider", ["VI", "AIRTEL", "JIO", "BSNL", "Other"])
             elif sim_sel != "None":
                 final_sim_num = sim_sel
-                # Try to auto-fetch provider from SIM DB
                 if not sim_df.empty:
                     match = sim_df[sim_df["SIM Number"] == final_sim_num]
                     if not match.empty:
                         final_sim_prov = match.iloc[0]["Provider"]
-                st.info(f"Provider: {final_sim_prov}")
+                st.info(f"✅ Provider: {final_sim_prov}")
 
-        with c8:
-            # Smart Client Selection
+        st.divider()
+
+        # --- SECTION 4: STAKEHOLDERS ---
+        st.markdown("### 👥 Client & Partner Info")
+        
+        col_p, col_c, col_i = st.columns(3)
+
+        # 1. CHANNEL PARTNER
+        with col_p:
+            avail_partners = []
+            if "Channel Partner" in prod_df.columns:
+                avail_partners = prod_df[prod_df["Channel Partner"] != ""]["Channel Partner"].unique().tolist()
+            
+            p_mode = st.radio("Channel Partner", ["Existing", "New"], horizontal=True)
+            if p_mode == "Existing" and avail_partners:
+                final_partner = st.selectbox("Select Partner", avail_partners)
+            else:
+                final_partner = st.text_input("Enter Partner Name")
+
+        # 2. CLIENT / END USER
+        with col_c:
             avail_clients = []
             if not client_df.empty:
                 avail_clients = client_df["Client Name"].unique().tolist()
             
-            client_mode = st.radio("Client", ["Existing", "New"], horizontal=True, label_visibility="collapsed")
-            if client_mode == "Existing" and avail_clients:
+            c_mode = st.radio("Client", ["Existing", "New"], horizontal=True)
+            if c_mode == "Existing" and avail_clients:
                 final_client = st.selectbox("Select Client", avail_clients)
             else:
                 final_client = st.text_input("Enter Client Name")
-            
-            # Industry Category
+
+        # 3. INDUSTRY
+        with col_i:
             avail_inds = []
             if "Industry Category" in prod_df.columns:
                 avail_inds = prod_df[prod_df["Industry Category"] != ""]["Industry Category"].unique().tolist()
             
-            ind_mode = st.radio("Industry", ["Existing", "New"], horizontal=True, label_visibility="collapsed")
-            if ind_mode == "Existing" and avail_inds:
+            i_mode = st.radio("Industry", ["Existing", "New"], horizontal=True)
+            if i_mode == "Existing" and avail_inds:
                 final_ind = st.selectbox("Select Industry", avail_inds)
             else:
                 final_ind = st.text_input("Enter Industry Category")
 
-        if st.button("Save Dispatch", type="primary", use_container_width=True):
+        st.markdown("---")
+        
+        # SAVE BUTTON
+        if st.button("💾 Save Dispatch Entry", type="primary", use_container_width=True):
             missing_fields = []
             if not sn: missing_fields.append("S/N")
             if not final_client: missing_fields.append("Client")
@@ -366,42 +387,24 @@ def main():
                 else:
                     renew_date = calculate_renewal(activ_d, valid)
                     new_prod = {
-                        "S/N": sn, 
-                        "OEM S/N": oem, 
-                        "Product Name": prod, 
-                        "Model": model,
-                        "Connectivity (2G/4G)": conn, 
-                        "Cable Length": cable,
-                        "Installation Date": str(install_d),
-                        "Activation Date": str(activ_d), 
-                        "Validity (Months)": valid,
-                        "Renewal Date": str(renew_date), 
-                        "Device UID": uid, 
-                        "SIM Number": final_sim_num,
-                        "SIM Provider": final_sim_prov,
-                        "Channel Partner": final_partner,
-                        "End User": final_client, 
-                        "Industry Category": final_ind
+                        "S/N": sn, "OEM S/N": oem, "Product Name": prod, "Model": model,
+                        "Connectivity (2G/4G)": conn, "Cable Length": cable,
+                        "Installation Date": str(install_d), "Activation Date": str(activ_d), 
+                        "Validity (Months)": valid, "Renewal Date": str(renew_date), 
+                        "Device UID": uid, "SIM Number": final_sim_num, "SIM Provider": final_sim_prov,
+                        "Channel Partner": final_partner, "End User": final_client, "Industry Category": final_ind
                     }
                     
                     if append_to_sheet("Products", new_prod):
-                        # Auto-save Client if new
-                        if client_mode == "New" and final_client:
+                        if c_mode == "New" and final_client:
                              append_to_sheet("Clients", {"Client Name": final_client})
                         
-                        # Update/Add SIM
                         if final_sim_num:
                             sim_db_list = sim_df["SIM Number"].values if "SIM Number" in sim_df.columns else []
                             if final_sim_num in sim_db_list: 
                                 update_sim_status(final_sim_num, "Used", sn)
                             else: 
-                                append_to_sheet("Sims", {
-                                    "SIM Number": final_sim_num, 
-                                    "Provider": final_sim_prov,
-                                    "Status": "Used", 
-                                    "Used In S/N": sn,
-                                    "Entry Date": str(date.today())
-                                })
+                                append_to_sheet("Sims", {"SIM Number": final_sim_num, "Provider": final_sim_prov, "Status": "Used", "Used In S/N": sn, "Entry Date": str(date.today())})
                         st.success("✅ Dispatch Saved Successfully!")
                         st.balloons()
                         st.rerun()
