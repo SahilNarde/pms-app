@@ -62,7 +62,6 @@ def append_to_sheet(tab_name, data_dict):
     ws = get_worksheet(SHEET_NAME, tab_name)
     if not ws: return False
     try:
-        # If sheet is empty, add headers first
         if not ws.row_values(1):
             headers = list(data_dict.keys())
             ws.append_row(headers)
@@ -272,8 +271,8 @@ def main():
     elif menu == "New Dispatch Entry":
         st.subheader("📝 New Dispatch")
         
-        # --- SECTION 1: DEVICE DETAILS ---
-        st.markdown("### 🛠️ Device Details")
+        # --- SECTION 1: DEVICE & NETWORK ---
+        st.markdown("### 🛠️ Device & Network")
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             sn = st.text_input("Product S/N (Required)")
@@ -286,89 +285,85 @@ def main():
             cable = st.text_input("Cable Length")
         with c4:
             uid = st.text_input("Device UID")
-            valid = st.number_input("Validity (Months)", 1, 60, 12)
+            # Smart SIM Selection
+            avail_sims = []
+            if not sim_df.empty and "Status" in sim_df.columns:
+                avail_sims = sim_df[sim_df["Status"] == "Available"]["SIM Number"].tolist()
+            
+            sim_opts = ["None"] + avail_sims + ["➕ Add New SIM..."]
+            sim_sel = st.selectbox("SIM Card", sim_opts)
 
-        # --- SECTION 2: DATES ---
-        st.markdown("### 📅 Installation Dates")
-        d1, d2 = st.columns(2)
-        with d1:
-            install_d = st.date_input("Installation Date")
-        with d2:
-            activ_d = st.date_input("Activation Date")
-
-        st.divider()
-
-        # --- SECTION 3: SIM CARD ---
-        st.markdown("### 📡 SIM & Network")
-        
-        avail_sims = []
-        if not sim_df.empty and "Status" in sim_df.columns:
-            avail_sims = sim_df[sim_df["Status"] == "Available"]["SIM Number"].tolist()
-
-        s1, s2 = st.columns([1, 1])
-        with s1:
-            sim_sel = st.selectbox("Select SIM", ["None", "New Manual Entry"] + avail_sims)
-        
+        # SIM Logic (Conditional Display)
         final_sim_num = ""
         final_sim_prov = "VI"
-
-        with s2:
-            if sim_sel == "New Manual Entry":
-                c_sim1, c_sim2 = st.columns(2)
-                with c_sim1:
-                    final_sim_num = st.text_input("Enter SIM Number")
-                with c_sim2:
-                    final_sim_prov = st.selectbox("Provider", ["VI", "AIRTEL", "JIO", "BSNL", "Other"])
-            elif sim_sel != "None":
-                final_sim_num = sim_sel
-                if not sim_df.empty:
-                    match = sim_df[sim_df["SIM Number"] == final_sim_num]
-                    if not match.empty:
-                        final_sim_prov = match.iloc[0]["Provider"]
-                st.info(f"✅ Provider: {final_sim_prov}")
+        
+        if sim_sel == "➕ Add New SIM...":
+            c_s1, c_s2 = st.columns(2)
+            with c_s1:
+                final_sim_num = st.text_input("Enter New SIM Number")
+            with c_s2:
+                final_sim_prov = st.selectbox("Provider", ["VI", "AIRTEL", "JIO", "BSNL", "Other"])
+        elif sim_sel != "None":
+            final_sim_num = sim_sel
+            if not sim_df.empty:
+                match = sim_df[sim_df["SIM Number"] == final_sim_num]
+                if not match.empty:
+                    final_sim_prov = match.iloc[0]["Provider"]
 
         st.divider()
 
-        # --- SECTION 4: STAKEHOLDERS ---
-        st.markdown("### 👥 Client & Partner Info")
+        # --- SECTION 2: CLIENT & PARTNER ---
+        st.markdown("### 👥 Client & Partner")
         
-        col_p, col_c, col_i = st.columns(3)
+        col_p, col_c, col_i, col_d = st.columns(4)
 
-        # 1. CHANNEL PARTNER
+        # 1. CHANNEL PARTNER (Smart Dropdown)
         with col_p:
             avail_partners = []
             if "Channel Partner" in prod_df.columns:
                 avail_partners = prod_df[prod_df["Channel Partner"] != ""]["Channel Partner"].unique().tolist()
             
-            p_mode = st.radio("Channel Partner", ["Existing", "New"], horizontal=True)
-            if p_mode == "Existing" and avail_partners:
-                final_partner = st.selectbox("Select Partner", avail_partners)
+            partner_opts = ["Select..."] + sorted(avail_partners) + ["➕ Create New..."]
+            p_sel = st.selectbox("Channel Partner", partner_opts)
+            
+            if p_sel == "➕ Create New...":
+                final_partner = st.text_input("Enter Partner Name", placeholder="Type name...")
             else:
-                final_partner = st.text_input("Enter Partner Name")
+                final_partner = p_sel if p_sel != "Select..." else ""
 
-        # 2. CLIENT / END USER
+        # 2. CLIENT (Smart Dropdown)
         with col_c:
             avail_clients = []
             if not client_df.empty:
                 avail_clients = client_df["Client Name"].unique().tolist()
             
-            c_mode = st.radio("Client", ["Existing", "New"], horizontal=True)
-            if c_mode == "Existing" and avail_clients:
-                final_client = st.selectbox("Select Client", avail_clients)
+            client_opts = ["Select..."] + sorted(avail_clients) + ["➕ Create New..."]
+            c_sel = st.selectbox("End User (Client)", client_opts)
+            
+            if c_sel == "➕ Create New...":
+                final_client = st.text_input("Enter Client Name", placeholder="Type name...")
             else:
-                final_client = st.text_input("Enter Client Name")
+                final_client = c_sel if c_sel != "Select..." else ""
 
-        # 3. INDUSTRY
+        # 3. INDUSTRY (Smart Dropdown)
         with col_i:
             avail_inds = []
             if "Industry Category" in prod_df.columns:
                 avail_inds = prod_df[prod_df["Industry Category"] != ""]["Industry Category"].unique().tolist()
             
-            i_mode = st.radio("Industry", ["Existing", "New"], horizontal=True)
-            if i_mode == "Existing" and avail_inds:
-                final_ind = st.selectbox("Select Industry", avail_inds)
+            ind_opts = ["Select..."] + sorted(avail_inds) + ["➕ Create New..."]
+            i_sel = st.selectbox("Industry", ind_opts)
+            
+            if i_sel == "➕ Create New...":
+                final_ind = st.text_input("Enter Industry", placeholder="Type category...")
             else:
-                final_ind = st.text_input("Enter Industry Category")
+                final_ind = i_sel if i_sel != "Select..." else ""
+
+        # 4. DATES (Compact)
+        with col_d:
+            install_d = st.date_input("Installation Date")
+            valid = st.number_input("Validity (Months)", 1, 60, 12)
+            activ_d = st.date_input("Activation Date")
 
         st.markdown("---")
         
@@ -396,9 +391,11 @@ def main():
                     }
                     
                     if append_to_sheet("Products", new_prod):
-                        if c_mode == "New" and final_client:
+                        # Auto-save Client if new
+                        if c_sel == "➕ Create New..." and final_client:
                              append_to_sheet("Clients", {"Client Name": final_client})
                         
+                        # Update/Add SIM
                         if final_sim_num:
                             sim_db_list = sim_df["SIM Number"].values if "SIM Number" in sim_df.columns else []
                             if final_sim_num in sim_db_list: 
