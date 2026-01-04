@@ -29,7 +29,7 @@ LOGO_FILENAME = "FINAL LOGO.png"
 COMPANY_INFO = {
     "name": "Orcatech Enterprises",
     "address": "Flat No. 102, Mayureshwar Heights, S.No. 24/4,\nJadhavrao Industrial Estate, Nanded City,\nSinhagad Road, Pune 411041",
-    "contact": "sales@orcatech.co.in | Mobile: 9325665554",  # <--- UPDATED HERE
+    "contact": "sales@orcatech.co.in | Mobile: 9325665554",
     "gst": "27AWIPN2502N1ZB",
     "bank_name": "Bank of Maharashtra",
     "acc_name": "ORCATECH ENTERPRISES",
@@ -446,13 +446,14 @@ def main():
                             s_valid = sq2.date_input("Valid Until", date.today() + relativedelta(days=15))
                             if st.form_submit_button("Generate & Preview"):
                                 device_list = [{"sn": selected_sn, "product": row.get('Product Name'), "model": row.get('Model', '-'), "renewal": row.get('Renewal Date')}]
-                                st.session_state['single_quote'] = {"client": row.get('End User'), "devices": device_list, "rate": s_rate, "valid": s_valid}
+                                # KEY FIXED HERE
+                                st.session_state['single_quote_data'] = {"client": row.get('End User'), "devices": device_list, "rate": s_rate, "valid": s_valid}
                                 st.success("Quote Ready! See Email section.")
 
                     # 2. Email
-                    if 'single_quote' in st.session_state:
+                    if 'single_quote_data' in st.session_state:
                         with st.expander("📧 Email Quote", expanded=True):
-                            sq_data = st.session_state['single_quote']
+                            sq_data = st.session_state['single_quote_data']
                             client_name = sq_data['client']
                             client_email = ""
                             if not client_df.empty:
@@ -465,7 +466,7 @@ def main():
                                     pdf = create_quotation_pdf(client_name, sq_data['devices'], sq_data['rate'], sq_data['valid'])
                                     if send_email_with_attachment(se_to, f"Renewal Quote - {selected_sn}", "Please find quote attached.", pdf, f"Quote_{selected_sn}.pdf"):
                                         st.success("Sent!")
-                                        del st.session_state['single_quote']
+                                        del st.session_state['single_quote_data']
 
                     # 3. Update DB
                     with st.expander("📅 Update Renewal Date (Finalize)", expanded=True):
@@ -498,13 +499,14 @@ def main():
                                 d_list = []
                                 for _, r in client_devs.iterrows():
                                     d_list.append({"sn": r['S/N'], "product": r.get('Product Name'), "model": r.get('Model', '-'), "renewal": r.get('Renewal Date')})
-                                st.session_state['bulk_quote'] = {"client": sel_client, "devices": d_list, "rate": b_rate, "valid": b_valid}
+                                # KEY FIXED HERE
+                                st.session_state['bulk_quote_data'] = {"client": sel_client, "devices": d_list, "rate": b_rate, "valid": b_valid}
                                 st.success(f"Quote generated for {len(d_list)} devices.")
 
                     # 2. Email
-                    if 'bulk_quote' in st.session_state:
+                    if 'bulk_quote_data' in st.session_state:
                         with st.expander("📧 Email Bulk Quote", expanded=True):
-                            bq_data = st.session_state['bulk_quote']
+                            bq_data = st.session_state['bulk_quote_data']
                             c_mail = ""
                             if not client_df.empty:
                                 m = client_df[client_df["Client Name"] == sel_client]
@@ -516,7 +518,7 @@ def main():
                                     pdf = create_quotation_pdf(sel_client, bq_data['devices'], bq_data['rate'], bq_data['valid'])
                                     if send_email_with_attachment(be_to, f"Bulk Renewal Quote - {sel_client}", f"Please find attached the renewal quote for {len(bq_data['devices'])} devices.", pdf, f"Quote_{sel_client}.pdf"):
                                         st.success("Sent!")
-                                        del st.session_state['bulk_quote']
+                                        del st.session_state['bulk_quote_data']
 
                     # 3. Update DB
                     with st.expander("📅 Bulk Update Renewal (Finalize)", expanded=True):
