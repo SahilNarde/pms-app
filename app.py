@@ -42,6 +42,25 @@ COMPANY_INFO = {
 
 st.set_page_config(page_title="Product Management System", page_icon="🏭", layout="wide")
 
+# --- CUSTOM CSS FOR LOGO & SPACING ---
+st.markdown(
+    """
+    <style>
+        /* Reduce top padding in sidebar */
+        [data-testid="stSidebar"] .block-container {
+            padding-top: 1rem;
+            padding-bottom: 1rem;
+        }
+        /* Center images in sidebar explicitly if needed */
+        [data-testid="stSidebar"] img {
+            margin: 0 auto;
+            display: block;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # --- GOOGLE SHEETS CONNECTION ---
 @st.cache_resource
 def get_gspread_client():
@@ -63,7 +82,7 @@ def get_worksheet(sheet_name, tab_name):
     except Exception as e:
         return None
 
-# --- UI HELPER FUNCTIONS (NEW) ---
+# --- UI HELPER FUNCTIONS ---
 def img_to_bytes(img_path):
     img_bytes = Path(img_path).read_bytes()
     encoded = base64.b64encode(img_bytes).decode()
@@ -75,8 +94,8 @@ def render_centered_logo(img_path, width_px):
         img_base64 = img_to_bytes(img_path)
         st.markdown(
             f"""
-            <div style="display: flex; justify-content: center; margin-bottom: 20px;">
-                <img src="data:image/png;base64,{img_base64}" alt="Logo" width="{width_px}">
+            <div style="display: flex; justify-content: center; align-items: center; margin-bottom: 20px;">
+                <img src="data:image/png;base64,{img_base64}" alt="Logo" style="width:{width_px}px; max-width: 100%; height: auto;">
             </div>
             """,
             unsafe_allow_html=True
@@ -344,8 +363,7 @@ def main():
         c1, c2, c3 = st.columns([1, 1, 1])
         with c2:
             # --- LOGO ON LOGIN (FIXED: CENTERED & CLEARER) ---
-            # Using HTML/CSS for perfect centering. Increased width to 250px for clarity.
-            render_centered_logo(LOGO_FILENAME, 250)
+            render_centered_logo(LOGO_FILENAME, 350) # Increased width for clarity
             
             st.markdown("## 🔒 System Login")
             with st.form("login_form"):
@@ -362,8 +380,7 @@ def main():
 
     with st.sidebar:
         # --- LOGO ON SIDEBAR (FIXED: CENTERED) ---
-        # Using HTML/CSS for perfect centering. Kept small (120px).
-        render_centered_logo(LOGO_FILENAME, 120)
+        render_centered_logo(LOGO_FILENAME, 150)
         st.markdown("---")
             
         st.info(f"👤 User: **{st.session_state.user_name}**")
