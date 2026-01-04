@@ -63,7 +63,7 @@ def get_worksheet(sheet_name, tab_name):
         return None
 
 # --- PDF GENERATOR (PLATYPUS ENGINE) ---
-def create_quotation_pdf(client_details, device_list, rate_per_device, valid_until):
+def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until):
     """
     client_details: Dict containing 'Client Name', 'Address', 'Contact Person', 'Email', 'Phone Number'
     """
@@ -98,11 +98,18 @@ def create_quotation_pdf(client_details, device_list, rate_per_device, valid_unt
     elements.append(Spacer(1, 0.2*inch))
 
     # 3. Bill To Section (Updated with full details)
-    c_name = client_details.get('Client Name', '')
-    c_person = client_details.get('Contact Person', '')
-    c_addr = client_details.get('Address', '').replace('\n', '<br/>')
-    c_phone = client_details.get('Phone Number', '')
-    c_email = client_details.get('Email', '')
+    # Check if client_name is a dict (full details) or string (fallback)
+    if isinstance(client_name, dict):
+        details = client_name
+        c_name = details.get('Client Name', '')
+        c_person = details.get('Contact Person', '')
+        c_addr = details.get('Address', '').replace('\n', '<br/>')
+        c_phone = details.get('Phone Number', '')
+        c_email = details.get('Email', '')
+    else:
+        # Fallback if just a string name is passed
+        c_name = str(client_name)
+        c_person, c_addr, c_phone, c_email = "", "", "", ""
 
     bill_to_html = f"""<b>Bill To:</b><br/>
     <font size=12><b>{c_name}</b></font><br/>"""
@@ -169,10 +176,27 @@ def create_quotation_pdf(client_details, device_list, rate_per_device, valid_unt
     IFSC Code: {COMPANY_INFO['ifsc']}<br/>
     Branch: {COMPANY_INFO['branch']}"""
     elements.append(Paragraph(bank_info, styles['Normal']))
+    elements.append(Spacer(1, 0.2*inch))
+
+    # 6. DISCLAIMER (NEW)
+    disclaimer_style = ParagraphStyle(
+        'Disclaimer', 
+        parent=styles['Normal'], 
+        fontSize=8, 
+        textColor=colors.red
+    )
+    disclaimer_text = "<b>Disclaimer:</b> Orcatech Enterprises shall not be held liable for any data loss or unavailability of historical records occurring after the subscription expiry date. Please ensure timely renewal to maintain continuous data retention."
+    elements.append(Paragraph(disclaimer_text, disclaimer_style))
     
-    # 6. Professional Footer
+    # 7. Professional Footer
     elements.append(Spacer(1, 0.5*inch))
-    footer_style = ParagraphStyle('Footer', parent=styles['Italic'], fontSize=9, textColor=colors.darkgrey, alignment=TA_CENTER)
+    footer_style = ParagraphStyle(
+        'Footer', 
+        parent=styles['Italic'], 
+        fontSize=9, 
+        textColor=colors.darkgrey, 
+        alignment=TA_CENTER
+    )
     footer_text = "This is a computer-generated document and does not require a physical signature."
     elements.append(Paragraph(footer_text, footer_style))
     
