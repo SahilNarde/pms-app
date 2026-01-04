@@ -322,9 +322,9 @@ def main():
     if not st.session_state.logged_in:
         c1, c2, c3 = st.columns([1, 1, 1])
         with c2:
-            # --- LOGO ON LOGIN ---
+            # FIXED: Reduced Logo size for Login Page
             if os.path.exists(LOGO_FILENAME):
-                st.image(LOGO_FILENAME, use_container_width=True)
+                st.image(LOGO_FILENAME, width=200) # Smaller fixed width
             
             st.markdown("## 🔒 System Login")
             with st.form("login_form"):
@@ -340,9 +340,9 @@ def main():
         return
 
     with st.sidebar:
-        # --- LOGO ON SIDEBAR ---
+        # FIXED: Reduced Logo size for Sidebar
         if os.path.exists(LOGO_FILENAME):
-            st.image(LOGO_FILENAME, use_container_width=True)
+            st.image(LOGO_FILENAME, width=120) # Smaller fixed width
             st.markdown("---")
             
         st.info(f"👤 User: **{st.session_state.user_name}**")
@@ -375,7 +375,7 @@ def main():
 
     menu = st.sidebar.radio("Go to:", ["Dashboard", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "IMPORT/EXPORT DB"])
 
-    # ADDED STATS TO BOTTOM OF SIDEBAR
+    # STATS AT BOTTOM OF SIDEBAR
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 📊 Database Stats")
     st.sidebar.caption(f"📦 Products: {len(prod_df)}")
@@ -432,7 +432,7 @@ def main():
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             sn = st.text_input("Product S/N (Required)")
-            oem = st.text_input("OEM S/N")
+            oem = c1.text_input("OEM S/N")
         with c2:
             prod = st.selectbox("Product Name", BASE_PRODUCT_LIST)
             model = st.text_input("Model")
