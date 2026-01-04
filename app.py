@@ -42,7 +42,7 @@ COMPANY_INFO = {
 
 st.set_page_config(page_title="Product Management System", page_icon="🏭", layout="wide")
 
-# --- CUSTOM CSS FOR LAYOUT & SPACING ---
+# --- CUSTOM CSS FOR LAYOUT ---
 st.markdown(
     """
     <style>
@@ -358,23 +358,37 @@ def main():
         st.session_state.user_name = ""
 
     if not st.session_state.logged_in:
-        c1, c2, c3 = st.columns([1, 1, 1])
+        # Use wider middle column to hold side-by-side layout
+        c1, c2, c3 = st.columns([1, 3, 1])
         with c2:
-            render_centered_logo(LOGO_FILENAME, 350) 
-            st.markdown("## 🔒 System Login")
-            with st.form("login_form"):
-                user = st.text_input("Username")
-                pwd = st.text_input("Password", type="password")
-                if st.form_submit_button("Login"):
-                    name = check_login(user, pwd)
-                    if name:
-                        st.session_state.logged_in = True
-                        st.session_state.user_name = name
-                        st.rerun()
-                    else: st.error("Invalid Credentials")
+            st.write("") # Spacer
+            st.write("") 
+            # --- SPLIT LAYOUT: LOGO LEFT | FORM RIGHT ---
+            c_logo, c_form = st.columns([1, 1.5], gap="large")
+            
+            with c_logo:
+                # Vertical spacer to align logo with form
+                st.write("")
+                st.write("")
+                if os.path.exists(LOGO_FILENAME):
+                    st.image(LOGO_FILENAME, use_container_width=True)
+            
+            with c_form:
+                st.markdown("## 🔒 System Login")
+                with st.form("login_form"):
+                    user = st.text_input("Username")
+                    pwd = st.text_input("Password", type="password")
+                    if st.form_submit_button("Login"):
+                        name = check_login(user, pwd)
+                        if name:
+                            st.session_state.logged_in = True
+                            st.session_state.user_name = name
+                            st.rerun()
+                        else: st.error("Invalid Credentials")
         return
 
     with st.sidebar:
+        # --- LOGO ON SIDEBAR (CENTERED) ---
         render_centered_logo(LOGO_FILENAME, 120)
         st.markdown("---")
         
@@ -383,19 +397,18 @@ def main():
         
         # --- BOTTOM SECTION ---
         st.markdown("---")
-        # Reduced size refresh button
+        # Refresh button (small)
         if st.button("🔄 Refresh Data"): 
             load_data.clear()
             st.rerun()
             
-        # Logout button above stats
+        # Logout button
         if st.button("🚪 Logout", type="primary", use_container_width=True):
             st.session_state.logged_in = False
             st.rerun()
 
         st.markdown("### 📊 Database Stats")
-        
-        # Placeholder for stats (populated after data load)
+        # Placeholder for stats
         stats_placeholder = st.empty()
 
     # --- TOP HEADER (USER INFO RIGHT) ---
@@ -403,7 +416,7 @@ def main():
     with c_title:
         st.title("🏭 PMS (Cloud)")
     with c_user:
-        # Display User Name on top right
+        # User Name top right
         st.success(f"👤 **{st.session_state.user_name}**")
         
     st.markdown("---")
@@ -414,7 +427,6 @@ def main():
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
         
-        # Fallback empty dfs
         if prod_df.empty or "S/N" not in prod_df.columns:
             prod_df = pd.DataFrame(columns=["S/N", "End User", "Product Name", "Model", "Renewal Date", "Industry Category", "Installation Date", "Activation Date", "Validity (Months)", "Channel Partner", "Device UID", "Connectivity (2G/4G)", "Cable Length", "SIM Number", "SIM Provider"])
         if client_df.empty or "Client Name" not in client_df.columns:
@@ -422,7 +434,7 @@ def main():
         if sim_df.empty or "SIM Number" not in sim_df.columns:
             sim_df = pd.DataFrame(columns=["SIM Number", "Status", "Provider", "Plan Details", "Entry Date", "Used In S/N"])
 
-        # Populate Sidebar Stats
+        # Populate Stats
         with stats_placeholder.container():
             st.caption(f"📦 Products: {len(prod_df)}")
             st.caption(f"👥 Clients: {len(client_df)}")
