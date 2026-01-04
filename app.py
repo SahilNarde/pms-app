@@ -178,7 +178,7 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     elements.append(Paragraph(bank_info, styles['Normal']))
     elements.append(Spacer(1, 0.2*inch))
 
-    # 6. DISCLAIMER
+    # 6. DISCLAIMER (NEW)
     disclaimer_style = ParagraphStyle(
         'Disclaimer', 
         parent=styles['Normal'], 
@@ -672,57 +672,34 @@ def main():
                                     if update_product_subscription(sn, str(b_start), b_dur, str(b_end)): cnt += 1
                                 st.success(f"Successfully updated {cnt} devices!"); st.rerun()
 
+    elif menu == "Installation List":
+        st.subheader("🔎 Installation Repository")
+        search = st.text_input("Search")
+        if search: st.dataframe(prod_df[prod_df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)], use_container_width=True)
+        else: st.dataframe(prod_df, use_container_width=True)
+
+    elif menu == "Client Master":
+        st.subheader("👥 Client Master")
+        st.dataframe(client_df, use_container_width=True)
+        clients = get_clean_list(client_df, "Client Name")
+        if clients:
+            c_edit = st.selectbox("Edit Client", clients)
+            row = client_df[client_df["Client Name"] == c_edit].iloc[0]
+            with st.form("edit_c"):
+                nm = st.text_input("Name", value=row["Client Name"])
+                em = st.text_input("Email", value=row.get("Email", ""))
+                ph = st.text_input("Phone", value=row.get("Phone Number", ""))
+                ad = st.text_input("Address", value=row.get("Address", ""))
+                if st.form_submit_button("Update"):
+                    if update_client_details(c_edit, {"Client Name": nm, "Email": em, "Phone Number": ph, "Address": ad}):
+                        st.success("Updated!"); st.rerun()
+
     elif menu == "Channel Partner Analytics":
-        st.subheader("🤝 Channel Partner Performance")
+        st.subheader("🤝 Partner Stats")
         if not prod_df.empty and "Channel Partner" in prod_df.columns:
-            # Ensure Status is calculated
-            if "Status_Calc" not in prod_df.columns:
-                prod_df['Status_Calc'] = prod_df['Renewal Date'].apply(check_expiry_status)
-
-            # Filter valid partners
-            partner_df = prod_df[prod_df["Channel Partner"].str.strip() != ""]
-
-            if not partner_df.empty:
-                # 1. TOP LEVEL METRICS
-                top_partner = partner_df["Channel Partner"].value_counts().idxmax()
-                total_partners = partner_df["Channel Partner"].nunique()
-                
-                m1, m2 = st.columns(2)
-                m1.metric("Total Active Partners", total_partners)
-                m2.metric("🏆 Top Performer", top_partner)
-
-                st.divider()
-
-                # 2. STACKED BAR CHART (Active vs Expired)
-                # Group by Partner AND Status
-                partner_status_counts = partner_df.groupby(["Channel Partner", "Status_Calc"]).size().reset_index(name='Count')
-                
-                fig_part = px.bar(
-                    partner_status_counts, 
-                    x="Channel Partner", 
-                    y="Count", 
-                    color="Status_Calc", 
-                    title="Installations by Partner (Status Breakdown)",
-                    color_discrete_map={"Active": "green", "Expiring Soon": "orange", "Expired": "red"},
-                    text_auto=True
-                )
-                st.plotly_chart(fig_part, use_container_width=True)
-
-                # 3. DRILL DOWN
-                st.subheader("🔍 Partner Drill-Down")
-                selected_partner = st.selectbox("Select Partner to View Details", sorted(partner_df["Channel Partner"].unique()))
-                
-                if selected_partner:
-                    specific_data = partner_df[partner_df["Channel Partner"] == selected_partner]
-                    st.info(f"Showing {len(specific_data)} devices installed by **{selected_partner}**")
-                    st.dataframe(
-                        specific_data[["S/N", "End User", "Product Name", "Installation Date", "Renewal Date", "Status_Calc"]], 
-                        use_container_width=True
-                    )
-            else:
-                st.info("No Channel Partner data found.")
-        else:
-            st.info("No Data.")
+            Stats = prod_df["Channel Partner"].value_counts().reset_index()
+            Stats.columns = ["Partner", "Count"]
+            st.plotly_chart(px.bar(Stats, x="Partner", y="Count"), use_container_width=True)
 
     elif menu == "IMPORT/EXPORT DB":
         st.subheader("💾 Backup")
