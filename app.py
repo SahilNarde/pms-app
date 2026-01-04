@@ -38,6 +38,7 @@ def get_worksheet(sheet_name, tab_name):
         sh = client.open(sheet_name)
         return sh.worksheet(tab_name)
     except Exception as e:
+        # Avoid UI clutter on momentary errors
         print(f"❌ Error opening tab '{tab_name}': {e}")
         return None
 
@@ -51,22 +52,32 @@ def load_data(tab_name):
     try:
         data = ws.get_all_records()
         df = pd.DataFrame(data)
-        # Force all data to string to avoid NaN issues
+        
+        # FIX: Handle empty frames immediately
+        if df.empty:
+            return pd.DataFrame()
+
+        # FIX: Convert all columns to string type first to avoid .str accessor errors
         df = df.astype(str)
-        # Clean column headers (remove extra spaces)
-        df.columns = df.columns.str.strip()
+        
+        # Clean column headers safely
+        df.columns = df.columns.astype(str).str.strip()
         return df
     except Exception as e:
-        st.error(f"Error reading {tab_name}: {e}")
+        # Return empty DF on error instead of crashing
         return pd.DataFrame()
 
 def get_clean_list(df, column_name):
     """Helper to extract a clean list of unique values from a column."""
-    if column_name not in df.columns:
+    if df.empty or column_name not in df.columns:
         return []
     
+    # Ensure column is string
+    series = df[column_name].astype(str)
+    
     # Get unique values
-    values = df[column_name].unique().tolist()
+    values = series.unique().tolist()
+    
     # Filter out garbage
     clean_values = [
         v.strip() for v in values 
@@ -163,10 +174,14 @@ def check_login(username, password):
     ws = get_worksheet(SHEET_NAME, "Credentials")
     if not ws: return None
     data = ws.get_all_records()
-    df = pd.DataFrame(data).astype(str)
+    df = pd.DataFrame(data)
+    
     if df.empty: return None
     
+    # Safe string conversion
+    df = df.astype(str)
     df.columns = df.columns.str.strip()
+    
     if 'Username' not in df.columns or 'Password' not in df.columns:
         return None
 
@@ -220,7 +235,7 @@ def main():
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
         
-        # 🛡️ SAFETY CHECK: Force Create Columns if they are missing
+        # Force Create Columns if they are missing (First run / Empty DB fix)
         required_sim_cols = ["SIM Number", "Provider", "Status", "Plan Details", "Entry Date", "Used In S/N"]
         for col in required_sim_cols:
             if col not in sim_df.columns: sim_df[col] = ""
@@ -232,8 +247,10 @@ def main():
         if "Installation Date" not in prod_df.columns: prod_df["Installation Date"] = ""
 
     except Exception as e:
-        st.error("⚠️ Data limit hit or connection error. Please wait a minute and click Refresh.")
-        return
+        # Fallback to empty if load fails completely
+        prod_df = pd.DataFrame(columns=["S/N", "Channel Partner", "Industry Category"])
+        client_df = pd.DataFrame(columns=["Client Name"])
+        sim_df = pd.DataFrame(columns=["SIM Number", "Status"])
 
     st.sidebar.caption(f"📦 Products: {len(prod_df)}")
     st.sidebar.caption(f"👥 Clients: {len(client_df)}")
@@ -259,12 +276,9 @@ def main():
             with col_g1:
                 # --- PIE CHART FIX ---
                 if "Industry Category" in prod_df.columns:
-                    # STRICT CLEANING: Remove 'nan', 'None', and whitespace
-                    clean_ind_df = prod_df.copy()
-                    # Convert to string and strip
-                    clean_ind_df["Industry Category"] = clean_ind_df["Industry Category"].astype(str).str.strip()
-                    # Filter out garbage
-                    clean_ind_df = clean_ind_df[~clean_ind_df['Industry Category'].isin(['nan', 'None', '', ' ', 'NaN', 'NULL'])]
+                    # Clean the column before plotting
+                    series = prod_df["Industry Category"].astype(str)
+                    clean_ind_df = prod_df[~series.isin(['nan', 'None', '', ' ', 'NaN', 'NULL'])]
                     
                     if not clean_ind_df.empty:
                         ind_counts = clean_ind_df['Industry Category'].value_counts().reset_index()
@@ -288,7 +302,7 @@ def main():
                     else:
                         st.info("No Installation Dates available for chart.")
 
-            # --- ALERT CENTER (TABS RESTORED) ---
+            # --- ALERT CENTER ---
             st.markdown("### ⚠️ Alert Center")
             tab_soon, tab_expired = st.tabs(["⏳ Expiring Soon", "❌ Expired"])
             
