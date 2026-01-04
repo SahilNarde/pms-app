@@ -38,7 +38,6 @@ def get_worksheet(sheet_name, tab_name):
         sh = client.open(sheet_name)
         return sh.worksheet(tab_name)
     except Exception as e:
-        # Avoid UI clutter on momentary errors
         print(f"❌ Error opening tab '{tab_name}': {e}")
         return None
 
@@ -52,33 +51,22 @@ def load_data(tab_name):
     try:
         data = ws.get_all_records()
         df = pd.DataFrame(data)
-        
-        # FIX: Handle empty frames immediately
-        if df.empty:
-            return pd.DataFrame()
-
-        # FIX: Convert all columns to string type first to avoid .str accessor errors
+        if df.empty: return pd.DataFrame()
+        # Force all data to string to avoid NaN issues
         df = df.astype(str)
-        
-        # Clean column headers safely
-        df.columns = df.columns.astype(str).str.strip()
+        # Clean column headers (remove extra spaces)
+        df.columns = df.columns.str.strip()
         return df
     except Exception as e:
-        # Return empty DF on error instead of crashing
+        st.error(f"Error reading {tab_name}: {e}")
         return pd.DataFrame()
 
 def get_clean_list(df, column_name):
     """Helper to extract a clean list of unique values from a column."""
     if df.empty or column_name not in df.columns:
         return []
-    
-    # Ensure column is string
     series = df[column_name].astype(str)
-    
-    # Get unique values
     values = series.unique().tolist()
-    
-    # Filter out garbage
     clean_values = [
         v.strip() for v in values 
         if v and str(v).lower() not in ["", "nan", "none", "null"] and v.strip() != ""
@@ -93,7 +81,6 @@ def append_to_sheet(tab_name, data_dict):
         if not ws.row_values(1):
             headers = list(data_dict.keys())
             ws.append_row(headers)
-            
         headers = ws.row_values(1)
         row_values = [str(data_dict.get(h, "")) for h in headers]
         ws.append_row(row_values)
@@ -111,11 +98,9 @@ def bulk_append_to_sheet(tab_name, df):
         if not sheet_headers:
             st.error(f"Tab '{tab_name}' is empty. Add headers first.")
             return False
-            
         for h in sheet_headers:
             if h not in df.columns:
                 df[h] = ""
-        
         df_sorted = df[sheet_headers]
         data_to_upload = df_sorted.astype(str).values.tolist()
         ws.append_rows(data_to_upload)
@@ -174,17 +159,11 @@ def check_login(username, password):
     ws = get_worksheet(SHEET_NAME, "Credentials")
     if not ws: return None
     data = ws.get_all_records()
-    df = pd.DataFrame(data)
-    
+    df = pd.DataFrame(data).astype(str)
     if df.empty: return None
-    
-    # Safe string conversion
-    df = df.astype(str)
     df.columns = df.columns.str.strip()
-    
     if 'Username' not in df.columns or 'Password' not in df.columns:
         return None
-
     user_match = df[(df['Username'].str.strip() == username.strip()) & (df['Password'].str.strip() == password.strip())]
     if not user_match.empty:
         return user_match.iloc[0]['Name']
@@ -196,7 +175,6 @@ def main():
         st.session_state.logged_in = False
         st.session_state.user_name = ""
 
-    # Login Screen
     if not st.session_state.logged_in:
         c1, c2, c3 = st.columns([1, 1, 1])
         with c2:
@@ -215,7 +193,6 @@ def main():
                         st.error("❌ Invalid Username or Password")
         return
 
-    # Sidebar
     with st.sidebar:
         st.info(f"👤 User: **{st.session_state.user_name}**")
         if st.button("🔄 Refresh Data"):
@@ -235,7 +212,6 @@ def main():
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
         
-        # Force Create Columns if they are missing (First run / Empty DB fix)
         required_sim_cols = ["SIM Number", "Provider", "Status", "Plan Details", "Entry Date", "Used In S/N"]
         for col in required_sim_cols:
             if col not in sim_df.columns: sim_df[col] = ""
@@ -247,10 +223,10 @@ def main():
         if "Installation Date" not in prod_df.columns: prod_df["Installation Date"] = ""
 
     except Exception as e:
-        # Fallback to empty if load fails completely
-        prod_df = pd.DataFrame(columns=["S/N", "Channel Partner", "Industry Category"])
-        client_df = pd.DataFrame(columns=["Client Name"])
-        sim_df = pd.DataFrame(columns=["SIM Number", "Status"])
+        # Fallback empty structure
+        prod_df = pd.DataFrame(columns=["S/N", "Industry Category", "Installation Date"])
+        client_df = pd.DataFrame()
+        sim_df = pd.DataFrame()
 
     st.sidebar.caption(f"📦 Products: {len(prod_df)}")
     st.sidebar.caption(f"👥 Clients: {len(client_df)}")
@@ -271,22 +247,27 @@ def main():
             c4.metric("Expired", len(prod_df[prod_df['Status_Calc'] == "Expired"]))
             st.divider()
             
+            # --- DEBUGGER (Hidden by default) ---
+            with st.expander("🛠️ View Raw Data (Click to Debug)"):
+                st.write("Columns found in Products DB:", prod_df.columns.tolist())
+                st.dataframe(prod_df.head())
+
             # --- GRAPHS ---
             col_g1, col_g2 = st.columns(2)
             with col_g1:
-                # --- PIE CHART FIX ---
+                # --- PIE CHART (FIXED) ---
                 if "Industry Category" in prod_df.columns:
-                    # Clean the column before plotting
-                    series = prod_df["Industry Category"].astype(str)
-                    clean_ind_df = prod_df[~series.isin(['nan', 'None', '', ' ', 'NaN', 'NULL'])]
+                    # Replace Blanks/NaN with "Uncategorized" so they show up on the chart
+                    df_pie = prod_df.copy()
+                    df_pie["Industry Category"] = df_pie["Industry Category"].replace(['nan', 'None', '', ' ', 'NaN', 'NULL'], "Uncategorized")
                     
-                    if not clean_ind_df.empty:
-                        ind_counts = clean_ind_df['Industry Category'].value_counts().reset_index()
-                        ind_counts.columns = ['Industry Category', 'Count']
-                        fig_pie = px.pie(ind_counts, values='Count', names='Industry Category', title="Industry Distribution", hole=0.4)
-                        st.plotly_chart(fig_pie, use_container_width=True)
-                    else:
-                        st.info("No Industry data available for chart.")
+                    ind_counts = df_pie['Industry Category'].value_counts().reset_index()
+                    ind_counts.columns = ['Industry Category', 'Count']
+                    
+                    fig_pie = px.pie(ind_counts, values='Count', names='Industry Category', title="Industry Distribution", hole=0.4)
+                    st.plotly_chart(fig_pie, use_container_width=True)
+                else:
+                    st.error("Column 'Industry Category' missing in Google Sheet.")
 
             with col_g2:
                 if "Installation Date" in prod_df.columns:
@@ -300,7 +281,7 @@ def main():
                         fig_trend = px.area(trend_data, x="Month", y="Installations", title="Installation Growth (Monthly)", markers=True, color_discrete_sequence=["#00CC96"])
                         st.plotly_chart(fig_trend, use_container_width=True)
                     else:
-                        st.info("No Installation Dates available for chart.")
+                        st.info("No valid Installation Dates found.")
 
             # --- ALERT CENTER ---
             st.markdown("### ⚠️ Alert Center")
@@ -345,7 +326,6 @@ def main():
     elif menu == "New Dispatch Entry":
         st.subheader("📝 New Dispatch")
         
-        # --- SECTION 1: DEVICE & NETWORK ---
         st.markdown("### 🛠️ Device & Network")
         c1, c2, c3, c4 = st.columns(4)
         with c1:
@@ -359,7 +339,6 @@ def main():
             cable = st.text_input("Cable Length")
         with c4:
             uid = st.text_input("Device UID")
-            # Smart SIM Selection
             avail_sims = get_clean_list(sim_df[sim_df["Status"] == "Available"], "SIM Number")
             sim_opts = ["None"] + avail_sims + ["➕ Add New SIM..."]
             sim_sel = st.selectbox("SIM Card", sim_opts)
@@ -380,32 +359,27 @@ def main():
 
         st.divider()
 
-        # --- SECTION 2: CLIENT & PARTNER ---
         st.markdown("### 👥 Client & Partner")
         col_p, col_c, col_i, col_d = st.columns(4)
 
-        # 1. CHANNEL PARTNER (Smart Dropdown)
         with col_p:
             avail_partners = get_clean_list(prod_df, "Channel Partner")
             partner_opts = ["Select..."] + avail_partners + ["➕ Create New..."]
             p_sel = st.selectbox("Channel Partner", partner_opts)
             final_partner = st.text_input("Enter Partner Name", placeholder="Type name...") if p_sel == "➕ Create New..." else (p_sel if p_sel != "Select..." else "")
 
-        # 2. CLIENT (Smart Dropdown)
         with col_c:
             avail_clients = get_clean_list(client_df, "Client Name")
             client_opts = ["Select..."] + avail_clients + ["➕ Create New..."]
             c_sel = st.selectbox("End User (Client)", client_opts)
             final_client = st.text_input("Enter Client Name", placeholder="Type name...") if c_sel == "➕ Create New..." else (c_sel if c_sel != "Select..." else "")
 
-        # 3. INDUSTRY (Smart Dropdown)
         with col_i:
             avail_inds = get_clean_list(prod_df, "Industry Category")
             ind_opts = ["Select..."] + avail_inds + ["➕ Create New..."]
             i_sel = st.selectbox("Industry", ind_opts)
             final_ind = st.text_input("Enter Industry", placeholder="Type category...") if i_sel == "➕ Create New..." else (i_sel if i_sel != "Select..." else "")
 
-        # 4. DATES (Compact)
         with col_d:
             install_d = st.date_input("Installation Date")
             valid = st.number_input("Validity (Months)", 1, 60, 12)
