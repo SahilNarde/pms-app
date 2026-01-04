@@ -9,6 +9,13 @@ import io
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
+
+# --- PDF GENERATION LIBRARIES ---
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from reportlab.lib import colors
+from reportlab.lib.units import inch
 
 # --- CONFIGURATION ---
 SHEET_NAME = "PMS DB"
@@ -44,10 +51,69 @@ def get_worksheet(sheet_name, tab_name):
         print(f"❌ Error opening tab '{tab_name}': {e}")
         return None
 
-# --- EMAIL FUNCTION ---
-def send_email(to_email, subject, body):
+# --- PDF GENERATOR ---
+def create_quotation_pdf(client_name, product_name, sn, description, amount, valid_until):
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+
+    # -- Header --
+    c.setFont("Helvetica-Bold", 24)
+    c.drawString(50, height - 50, "QUOTATION")
+    
+    c.setFont("Helvetica", 10)
+    c.drawString(50, height - 70, f"Date: {date.today()}")
+    c.drawString(50, height - 85, f"Valid Until: {valid_until}")
+
+    # -- Company Info (Your Company) --
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(400, height - 50, "Orcatech Enterprises") # Replace with your Company Name
+    c.setFont("Helvetica", 10)
+    c.drawString(400, height - 65, "123 Tech Park, Pune")
+    c.drawString(400, height - 80, "support@orcatech.com")
+
+    c.line(50, height - 100, width - 50, height - 100)
+
+    # -- Client Details --
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(50, height - 130, "Bill To:")
+    c.setFont("Helvetica", 12)
+    c.drawString(50, height - 145, client_name)
+
+    # -- Table Header --
+    y = height - 200
+    c.setFillColor(colors.lightgrey)
+    c.rect(50, y, width - 100, 20, fill=1, stroke=0)
+    c.setFillColor(colors.black)
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(60, y + 6, "Description")
+    c.drawString(450, y + 6, "Amount (INR)")
+
+    # -- Line Item --
+    y -= 30
+    c.setFont("Helvetica", 10)
+    c.drawString(60, y, f"{product_name} (S/N: {sn})")
+    c.drawString(60, y - 15, description) # Sub-description
+    c.drawString(450, y, f"{amount:,.2f}")
+
+    # -- Total --
+    y -= 50
+    c.line(50, y, width - 50, y)
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(350, y - 20, "Total:")
+    c.drawString(450, y - 20, f"INR {amount:,.2f}")
+
+    # -- Footer --
+    c.setFont("Helvetica-Oblique", 8)
+    c.drawString(50, 50, "This is a computer-generated quotation. No signature required.")
+    
+    c.save()
+    buffer.seek(0)
+    return buffer
+
+# --- EMAIL FUNCTION (WITH ATTACHMENT) ---
+def send_email_with_attachment(to_email, subject, body, pdf_buffer, filename="Quotation.pdf"):
     try:
-        # Load email config from secrets
         email_conf = st.secrets["email"]
         smtp_server = email_conf["smtp_server"]
         smtp_port = email_conf["smtp_port"]
@@ -60,11 +126,16 @@ def send_email(to_email, subject, body):
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
 
+        # Attach PDF
+        if pdf_buffer:
+            part = MIMEApplication(pdf_buffer.read(), Name=filename)
+            part['Content-Disposition'] = f'attachment; filename="{filename}"'
+            msg.attach(part)
+
         server = smtplib.SMTP(smtp_server, smtp_port)
         server.starttls()
         server.login(sender_email, password)
-        text = msg.as_string()
-        server.sendmail(sender_email, to_email, text)
+        server.sendmail(sender_email, to_email, msg.as_string())
         server.quit()
         return True
     except Exception as e:
@@ -177,6 +248,26 @@ def update_product_subscription(sn, new_activ, new_val, new_renew):
         return False
     return False
 
+def update_client_details(original_name, updated_data):
+    ws = get_worksheet(SHEET_NAME, "Clients")
+    if not ws: return False
+    try:
+        cell = ws.find(original_name)
+        if cell:
+            headers = ws.row_values(1)
+            for key, value in updated_data.items():
+                if key in headers:
+                    col_index = headers.index(key) + 1
+                    ws.update_cell(cell.row, col_index, str(value))
+            load_data.clear()
+            return True
+        else:
+            st.error("Client not found.")
+            return False
+    except Exception as e:
+        st.error(f"Update failed: {e}")
+        return False
+
 # --- UTILITY ---
 def calculate_renewal(activation_date, months):
     if not activation_date: return None
@@ -260,8 +351,10 @@ def main():
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
         
-        if "S/N" not in prod_df.columns: prod_df = pd.DataFrame(columns=["S/N", "End User", "Renewal Date", "Industry Category", "Installation Date", "Activation Date", "Validity (Months)"])
-        if "Client Name" not in client_df.columns: client_df = pd.DataFrame(columns=["Client Name", "Email"])
+        if "S/N" not in prod_df.columns: prod_df = pd.DataFrame(columns=["S/N", "End User", "Renewal Date", "Industry Category", "Installation Date", "Activation Date", "Validity (Months)", "Channel Partner"])
+        required_client_cols = ["Client Name", "Email", "Phone Number", "Contact Person", "Address"]
+        for col in required_client_cols:
+            if col not in client_df.columns: client_df[col] = ""
         if "SIM Number" not in sim_df.columns: sim_df = pd.DataFrame(columns=["SIM Number", "Status", "Provider"])
     except Exception as e:
         st.error("⚠️ Data connection error. Please refresh.")
@@ -409,7 +502,7 @@ def main():
                         else: append_to_sheet("Sims", {"SIM Number": final_sim_num, "Provider": final_sim_prov, "Status": "Used", "Used In S/N": sn, "Entry Date": str(date.today())})
                     st.success("✅ Dispatch Saved Successfully!"); st.balloons(); st.rerun()
 
-    # 4. SUBSCRIPTION MANAGER
+    # 4. SUBSCRIPTION MANAGER (UPDATED WITH QUOTATION)
     elif menu == "Subscription Manager":
         st.subheader("🔄 Subscription Renewal Manager")
         if not prod_df.empty and "Renewal Date" in prod_df.columns:
@@ -423,7 +516,6 @@ def main():
                 selected_sn = selected_label.split(" | ")[0]
                 row = renew_candidates[renew_candidates['S/N'] == selected_sn].iloc[0]
                 
-                # --- INFO SECTION ---
                 st.divider()
                 st.markdown(f"**Current Status:** :red[{row['Status_Calc']}]")
                 c_info1, c_info2, c_info3 = st.columns(3)
@@ -431,43 +523,66 @@ def main():
                 c_info2.info(f"**Current Expiry:** {row.get('Renewal Date', 'N/A')}")
                 c_info3.info(f"**Client:** {row.get('End User', 'N/A')}")
 
-                # --- EMAIL REMINDER SECTION ---
-                st.markdown("### 📢 Send Reminder")
-                with st.expander("📧 Email Notification Settings", expanded=False):
+                # --- 1. GENERATE QUOTATION ---
+                st.markdown("### 📄 Generate Quotation")
+                with st.form("quote_form"):
+                    cq1, cq2 = st.columns(2)
+                    quote_amount = cq1.number_input("Subscription Amount (INR)", min_value=0.0, step=100.0)
+                    quote_desc = cq2.text_input("Line Item Description", value=f"Subscription Renewal for {row.get('Product Name', 'Device')} (12 Months)")
+                    quote_validity = st.date_input("Quote Valid Until", value=date.today() + relativedelta(days=15))
+                    
+                    submitted_quote = st.form_submit_button("📜 Generate Quote Preview")
+                    if submitted_quote:
+                        st.session_state['generated_quote'] = {
+                            'amount': quote_amount,
+                            'desc': quote_desc,
+                            'valid': quote_validity
+                        }
+                        st.success("Quote details saved! Review and send below.")
+
+                # --- 2. REVIEW & SEND ---
+                if 'generated_quote' in st.session_state:
+                    st.divider()
+                    st.markdown("### 📧 Review & Email")
+                    
+                    # Fetch Client Email
                     client_name = row.get('End User', 'Client')
                     client_email = ""
-                    # Try to fetch email from Client Master
                     if "Email" in client_df.columns:
                         match_client = client_df[client_df["Client Name"] == client_name]
-                        if not match_client.empty:
-                            client_email = match_client.iloc[0]["Email"]
-                    
-                    email_to = st.text_input("Recipient Email", value=client_email)
-                    email_subject = st.text_input("Subject", value=f"Subscription Expiry Reminder - Device {selected_sn}")
-                    email_body = st.text_area("Message", value=f"Dear {client_name},\n\nThis is a reminder that the subscription for your device ({row.get('Product Name', 'Device')}), S/N: {selected_sn}, is set to expire on {row.get('Renewal Date', 'soon')}.\n\nPlease contact us to renew your services.\n\nBest Regards,\nAdmin Team")
-                    
-                    if st.button("📨 Send Email Now"):
-                        if not email_to:
-                            st.error("Please enter a recipient email.")
-                        elif "email" not in st.secrets:
-                            st.error("Email secrets not found! Configure secrets.toml first.")
-                        else:
-                            with st.spinner("Sending email..."):
-                                if send_email(email_to, email_subject, email_body):
-                                    st.success("Email sent successfully!")
+                        if not match_client.empty: client_email = match_client.iloc[0]["Email"]
 
-                # --- RENEWAL SECTION ---
-                st.markdown("### 📅 Update Subscription")
-                with st.form("renew_form"):
-                    c_new1, c_new2 = st.columns(2)
-                    new_install_d = c_new1.date_input("New Activation/Start Date", date.today())
-                    new_validity = c_new2.number_input("Add Validity (Months)", min_value=1, value=12, step=1)
+                    q_data = st.session_state['generated_quote']
+                    
+                    ce1, ce2 = st.columns(2)
+                    email_to = ce1.text_input("Recipient Email", value=client_email)
+                    email_subject = ce2.text_input("Subject", value=f"Quotation for Subscription Renewal - {selected_sn}")
+                    email_body = st.text_area("Email Message", value=f"Dear {client_name},\n\nPlease find attached the quotation for the subscription renewal of your device ({selected_sn}).\n\nTotal Amount: INR {q_data['amount']:,.2f}\n\nRegards,\nOrcatech Enterprises")
+
+                    if st.button("📨 Send Quotation Email", type="primary"):
+                        if not email_to: st.error("Email required!")
+                        elif "email" not in st.secrets: st.error("Configure email secrets!")
+                        else:
+                            with st.spinner("Generating PDF & Sending..."):
+                                pdf_bytes = create_quotation_pdf(client_name, row.get('Product Name', 'Device'), selected_sn, q_data['desc'], q_data['amount'], q_data['valid'])
+                                if send_email_with_attachment(email_to, email_subject, email_body, pdf_bytes, filename=f"Quote_{selected_sn}.pdf"):
+                                    st.success(f"Quotation sent to {email_to}!")
+                                    del st.session_state['generated_quote'] # Clear state
+
+                # --- 3. RENEW (FINAL STEP) ---
+                st.divider()
+                st.markdown("### 📅 Finalize Renewal (Update Database)")
+                with st.form("renew_db_form"):
+                    cr1, cr2 = st.columns(2)
+                    new_install_d = cr1.date_input("New Activation Date", date.today())
+                    new_validity = cr2.number_input("Validity (Months)", min_value=1, value=12, step=1)
                     new_end_date = calculate_renewal(new_install_d, new_validity)
-                    st.write(f"**New Expiry Date will be:** :green[{new_end_date}]")
-                    if st.form_submit_button("✅ Confirm Renewal"):
+                    st.write(f"**New Expiry Date:** :green[{new_end_date}]")
+                    
+                    if st.form_submit_button("✅ Confirm Renewal in DB"):
                         if update_product_subscription(selected_sn, str(new_install_d), new_validity, str(new_end_date)):
-                            st.success(f"Subscription for {selected_sn} updated successfully!"); st.balloons(); st.rerun()
-                        else: st.error("Failed to update Google Sheet.")
+                            st.success(f"Database updated for {selected_sn}!"); st.balloons(); st.rerun()
+                        else: st.error("Update failed.")
         else: st.info("No product data available.")
 
     # 5. INSTALLATION LIST
@@ -483,7 +598,27 @@ def main():
 
     # 6. CLIENT MASTER
     elif menu == "Client Master":
+        st.subheader("👥 Client Master Database")
         st.dataframe(client_df, use_container_width=True)
+        st.divider()
+        st.markdown("### ✏️ Edit Client Details")
+        avail_clients = get_clean_list(client_df, "Client Name")
+        if avail_clients:
+            client_to_edit = st.selectbox("Select Client to Edit", avail_clients)
+            current_row = client_df[client_df["Client Name"] == client_to_edit].iloc[0]
+            with st.form("edit_client_form"):
+                new_name = st.text_input("Client Name (Editing this will NOT update Products)", value=current_row["Client Name"])
+                c_edit1, c_edit2 = st.columns(2)
+                new_email = c_edit1.text_input("Email", value=current_row.get("Email", ""))
+                new_phone = c_edit2.text_input("Phone Number", value=current_row.get("Phone Number", ""))
+                c_edit3, c_edit4 = st.columns(2)
+                new_contact = c_edit3.text_input("Contact Person", value=current_row.get("Contact Person", ""))
+                new_address = c_edit4.text_input("Address", value=current_row.get("Address", ""))
+                if st.form_submit_button("💾 Update Client Details"):
+                    update_payload = {"Client Name": new_name, "Email": new_email, "Phone Number": new_phone, "Contact Person": new_contact, "Address": new_address}
+                    if update_client_details(client_to_edit, update_payload):
+                        st.success("Client updated successfully!"); st.rerun()
+        else: st.info("No clients found to edit.")
     
     # 7. PARTNER ANALYTICS
     elif menu == "Channel Partner Analytics":
