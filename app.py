@@ -18,7 +18,7 @@ from reportlab.lib import colors
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+from reportlab.lib.enums import TA_CENTER
 
 # --- CONFIGURATION ---
 SHEET_NAME = "PMS DB"
@@ -59,20 +59,17 @@ def get_worksheet(sheet_name, tab_name):
         sh = client.open(sheet_name)
         return sh.worksheet(tab_name)
     except Exception as e:
-        print(f"❌ Error opening tab '{tab_name}': {e}")
+        # st.error(f"❌ Error opening tab '{tab_name}': {e}") # Suppressed to avoid UI clutter
         return None
 
-# --- PDF GENERATOR (PLATYPUS ENGINE) ---
+# --- PDF GENERATOR ---
 def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until):
-    """
-    client_details: Dict containing 'Client Name', 'Address', 'Contact Person', 'Email', 'Phone Number'
-    """
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
     elements = []
     styles = getSampleStyleSheet()
 
-    # 1. Header & Logo
+    # 1. Header
     logo = []
     if os.path.exists(LOGO_FILENAME):
         img = Image(LOGO_FILENAME, width=2*inch, height=1*inch)
@@ -86,10 +83,7 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     
     header_data = [[logo if logo else "", Paragraph(comp_details, styles['Normal'])]]
     header_table = Table(header_data, colWidths=[2.5*inch, 4.5*inch])
-    header_table.setStyle(TableStyle([
-        ('VALIGN', (0,0), (-1,-1), 'TOP'),
-        ('ALIGN', (1,0), (1,0), 'RIGHT'),
-    ]))
+    header_table.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'TOP'), ('ALIGN', (1,0), (1,0), 'RIGHT')]))
     elements.append(header_table)
     elements.append(Spacer(1, 0.2*inch))
     
@@ -97,78 +91,59 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     elements.append(Paragraph("QUOTATION", styles['Title']))
     elements.append(Spacer(1, 0.2*inch))
 
-    # 3. Bill To Section (Updated with full details)
-    # Check if client_name is a dict (full details) or string (fallback)
+    # 3. Bill To
     if isinstance(client_name, dict):
-        details = client_name
-        c_name = details.get('Client Name', '')
-        c_person = details.get('Contact Person', '')
-        c_addr = details.get('Address', '').replace('\n', '<br/>')
-        c_phone = details.get('Phone Number', '')
-        c_email = details.get('Email', '')
+        c_name = client_name.get('Client Name', '')
+        c_person = client_name.get('Contact Person', '')
+        c_addr = client_name.get('Address', '').replace('\n', '<br/>')
+        c_phone = client_name.get('Phone Number', '')
+        c_email = client_name.get('Email', '')
     else:
-        # Fallback if just a string name is passed
         c_name = str(client_name)
         c_person, c_addr, c_phone, c_email = "", "", "", ""
 
-    bill_to_html = f"""<b>Bill To:</b><br/>
-    <font size=12><b>{c_name}</b></font><br/>"""
+    bill_to = f"<b>Bill To:</b><br/><font size=12><b>{c_name}</b></font><br/>"
+    if c_person: bill_to += f"Attn: {c_person}<br/>"
+    if c_addr: bill_to += f"{c_addr}<br/>"
+    if c_phone or c_email: bill_to += f"Ph: {c_phone} | Email: {c_email}<br/>"
     
-    if c_person: bill_to_html += f"Attn: {c_person}<br/>"
-    if c_addr: bill_to_html += f"{c_addr}<br/>"
-    if c_phone or c_email: bill_to_html += f"Ph: {c_phone} | Email: {c_email}<br/>"
-    
-    # Date Block
-    date_html = f"""<br/><b>Date:</b> {date.today().strftime('%d-%b-%Y')}<br/>
-    <b>Valid Until:</b> {valid_until.strftime('%d-%b-%Y')}"""
-
-    client_info = bill_to_html + date_html
-    elements.append(Paragraph(client_info, styles['Normal']))
+    date_info = f"<br/><b>Date:</b> {date.today().strftime('%d-%b-%Y')}<br/><b>Valid Until:</b> {valid_until.strftime('%d-%b-%Y')}"
+    elements.append(Paragraph(bill_to + date_info, styles['Normal']))
     elements.append(Spacer(1, 0.2*inch))
 
-    # 4. Items Table
+    # 4. Table
     data = [['S/N', 'Product / Model', 'Description', 'Amount (INR)']]
-    
     subtotal = 0
-    for device in device_list:
-        desc = f"Subscription Renewal\n(Exp: {device['renewal']})"
-        row = [
-            device['sn'],
-            f"{device['product']}\n{device['model']}",
-            desc,
-            f"{rate_per_device:,.2f}"
-        ]
+    for d in device_list:
+        row = [d['sn'], f"{d['product']}\n{d['model']}", f"Subscription Renewal\n(Exp: {d['renewal']})", f"{rate_per_device:,.2f}"]
         data.append(row)
         subtotal += rate_per_device
 
-    # Taxes
     cgst = subtotal * 0.09
     sgst = subtotal * 0.09
     total = subtotal + cgst + sgst
 
-    # Add Totals
     data.append(['', '', 'Subtotal', f"{subtotal:,.2f}"])
     data.append(['', '', 'CGST (9%)', f"{cgst:,.2f}"])
     data.append(['', '', 'SGST (9%)', f"{sgst:,.2f}"])
     data.append(['', '', 'GRAND TOTAL', f"{total:,.2f}"])
 
-    # Table Styling
     table = Table(data, colWidths=[1.5*inch, 2*inch, 2*inch, 1.5*inch])
     table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.black),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('GRID', (0, 0), (-1, -5), 1, colors.black), 
-        ('LINEBELOW', (0, -4), (-1, -1), 1, colors.grey), 
-        ('FONTNAME', (-2, -1), (-1, -1), 'Helvetica-Bold'),
-        ('BACKGROUND', (-2, -1), (-1, -1), colors.whitesmoke),
+        ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.black),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('BOTTOMPADDING', (0,0), (-1,0), 12),
+        ('GRID', (0,0), (-1,-5), 1, colors.black),
+        ('LINEBELOW', (0,-4), (-1,-1), 1, colors.grey),
+        ('FONTNAME', (-2,-1), (-1,-1), 'Helvetica-Bold'),
+        ('BACKGROUND', (-2,-1), (-1,-1), colors.whitesmoke),
     ]))
     elements.append(table)
     elements.append(Spacer(1, 0.3*inch))
 
-    # 5. Bank Details
+    # 5. Bank Info
     bank_info = f"""<b>Bank Details for Payment:</b><br/>
     Account Name: {COMPANY_INFO['acc_name']}<br/>
     Bank Name: {COMPANY_INFO['bank_name']}<br/>
@@ -178,27 +153,15 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     elements.append(Paragraph(bank_info, styles['Normal']))
     elements.append(Spacer(1, 0.2*inch))
 
-    # 6. DISCLAIMER
-    disclaimer_style = ParagraphStyle(
-        'Disclaimer', 
-        parent=styles['Normal'], 
-        fontSize=8, 
-        textColor=colors.red
-    )
-    disclaimer_text = "<b>Disclaimer:</b> Orcatech Enterprises shall not be held liable for any data loss or unavailability of historical records occurring after the subscription expiry date. Please ensure timely renewal to maintain continuous data retention."
-    elements.append(Paragraph(disclaimer_text, disclaimer_style))
+    # 6. Disclaimer
+    disc_style = ParagraphStyle('Disclaimer', parent=styles['Normal'], fontSize=8, textColor=colors.red)
+    disc_text = "<b>Disclaimer:</b> Orcatech Enterprises shall not be held liable for any data loss or unavailability of historical records occurring after the subscription expiry date. Please ensure timely renewal to maintain continuous data retention."
+    elements.append(Paragraph(disc_text, disc_style))
     
-    # 7. Professional Footer
+    # 7. Footer
     elements.append(Spacer(1, 0.5*inch))
-    footer_style = ParagraphStyle(
-        'Footer', 
-        parent=styles['Italic'], 
-        fontSize=9, 
-        textColor=colors.darkgrey, 
-        alignment=TA_CENTER
-    )
-    footer_text = "This is a computer-generated document and does not require a physical signature."
-    elements.append(Paragraph(footer_text, footer_style))
+    footer_style = ParagraphStyle('Footer', parent=styles['Italic'], fontSize=9, textColor=colors.darkgrey, alignment=TA_CENTER)
+    elements.append(Paragraph("This is a computer-generated document and does not require a physical signature.", footer_style))
     
     doc.build(elements)
     buffer.seek(0)
@@ -213,12 +176,10 @@ def send_email_with_attachment(to_email, subject, body, pdf_buffer, filename="Qu
         msg['To'] = to_email
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
-
         if pdf_buffer:
             part = MIMEApplication(pdf_buffer.read(), Name=filename)
             part['Content-Disposition'] = f'attachment; filename="{filename}"'
             msg.attach(part)
-
         server = smtplib.SMTP(email_conf["smtp_server"], email_conf["smtp_port"])
         server.starttls()
         server.login(email_conf["sender_email"], email_conf["app_password"])
@@ -374,16 +335,25 @@ def main():
     st.title("🏭 Product Management System (Cloud)")
     st.markdown("---")
 
+    # --- ROBUST DATA LOADING WITH FALLBACKS ---
     try:
         prod_df = load_data("Products")
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
         
-        # Ensure safe DataFrames
-        if "S/N" not in prod_df.columns: prod_df = pd.DataFrame(columns=["S/N", "End User", "Renewal Date", "Industry Category", "Installation Date", "Activation Date", "Validity (Months)", "Channel Partner"])
-        if "Client Name" not in client_df.columns: client_df = pd.DataFrame(columns=["Client Name", "Email", "Phone Number", "Contact Person", "Address"])
-        if "SIM Number" not in sim_df.columns: sim_df = pd.DataFrame(columns=["SIM Number", "Status", "Provider"])
-    except: st.error("DB Error"); return
+        # Fallback: Create Empty DFs with correct columns if load failed or sheet is empty
+        if prod_df.empty or "S/N" not in prod_df.columns:
+            prod_df = pd.DataFrame(columns=["S/N", "End User", "Product Name", "Model", "Renewal Date", "Industry Category", "Installation Date", "Activation Date", "Validity (Months)", "Channel Partner", "Device UID", "Connectivity (2G/4G)", "Cable Length", "SIM Number", "SIM Provider"])
+        
+        if client_df.empty or "Client Name" not in client_df.columns:
+            client_df = pd.DataFrame(columns=["Client Name", "Email", "Phone Number", "Contact Person", "Address"])
+            
+        if sim_df.empty or "SIM Number" not in sim_df.columns:
+            sim_df = pd.DataFrame(columns=["SIM Number", "Status", "Provider", "Plan Details", "Entry Date", "Used In S/N"])
+
+    except Exception:
+        st.error("Connection Error. Data could not be loaded.")
+        return
 
     st.sidebar.caption(f"📦 Products: {len(prod_df)}")
     st.sidebar.caption(f"👥 Clients: {len(client_df)}")
@@ -393,37 +363,44 @@ def main():
 
     menu = st.sidebar.radio("Go to:", ["Dashboard", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "IMPORT/EXPORT DB"])
 
+    # 1. DASHBOARD
     if menu == "Dashboard":
         st.subheader("📊 Analytics Overview")
         if not prod_df.empty:
-            prod_df['Status_Calc'] = prod_df['Renewal Date'].apply(check_expiry_status)
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Total", len(prod_df))
-            c2.metric("Active", len(prod_df[prod_df['Status_Calc'] == "Active"]))
-            c3.metric("Expiring", len(prod_df[prod_df['Status_Calc'] == "Expiring Soon"]))
-            c4.metric("Expired", len(prod_df[prod_df['Status_Calc'] == "Expired"]))
-            st.divider()
-            col_g1, col_g2 = st.columns(2)
-            with col_g1:
-                if "Industry Category" in prod_df.columns:
-                    df_pie = prod_df[~prod_df["Industry Category"].isin(['', 'nan', 'None'])]
-                    if not df_pie.empty:
-                        fig = px.pie(df_pie, names='Industry Category', title="Industry Distribution", hole=0.4)
-                        st.plotly_chart(fig, use_container_width=True)
-            with col_g2:
-                if "Installation Date" in prod_df.columns:
-                    df_trend = prod_df.copy()
-                    df_trend["Installation Date"] = pd.to_datetime(df_trend["Installation Date"], errors='coerce')
-                    df_trend = df_trend.dropna(subset=["Installation Date"])
-                    if not df_trend.empty:
-                        trend = df_trend.groupby(df_trend["Installation Date"].dt.to_period("M")).size().reset_index(name="Count")
-                        trend["Month"] = trend["Installation Date"].astype(str)
-                        st.plotly_chart(px.area(trend, x="Month", y="Count", title="Monthly Installations", markers=True), use_container_width=True)
-            st.markdown("### ⚠️ Alert Center")
-            t1, t2 = st.tabs(["⏳ Expiring Soon", "❌ Expired"])
-            with t1: st.dataframe(prod_df[prod_df['Status_Calc']=="Expiring Soon"], use_container_width=True)
-            with t2: st.dataframe(prod_df[prod_df['Status_Calc']=="Expired"], use_container_width=True)
+            if 'Renewal Date' in prod_df.columns:
+                prod_df['Status_Calc'] = prod_df['Renewal Date'].apply(check_expiry_status)
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Total", len(prod_df))
+                c2.metric("Active", len(prod_df[prod_df['Status_Calc'] == "Active"]))
+                c3.metric("Expiring", len(prod_df[prod_df['Status_Calc'] == "Expiring Soon"]))
+                c4.metric("Expired", len(prod_df[prod_df['Status_Calc'] == "Expired"]))
+                st.divider()
+                
+                col_g1, col_g2 = st.columns(2)
+                with col_g1:
+                    if "Industry Category" in prod_df.columns:
+                        df_pie = prod_df[~prod_df["Industry Category"].isin(['', 'nan', 'None'])]
+                        if not df_pie.empty:
+                            fig = px.pie(df_pie, names='Industry Category', title="Industry Distribution", hole=0.4)
+                            st.plotly_chart(fig, use_container_width=True)
+                with col_g2:
+                    if "Installation Date" in prod_df.columns:
+                        df_trend = prod_df.copy()
+                        df_trend["Installation Date"] = pd.to_datetime(df_trend["Installation Date"], errors='coerce')
+                        df_trend = df_trend.dropna(subset=["Installation Date"])
+                        if not df_trend.empty:
+                            trend = df_trend.groupby(df_trend["Installation Date"].dt.to_period("M")).size().reset_index(name="Count")
+                            trend["Month"] = trend["Installation Date"].astype(str)
+                            st.plotly_chart(px.area(trend, x="Month", y="Count", title="Monthly Installations", markers=True), use_container_width=True)
+                
+                st.markdown("### ⚠️ Alert Center")
+                t1, t2 = st.tabs(["⏳ Expiring Soon", "❌ Expired"])
+                with t1: st.dataframe(prod_df[prod_df['Status_Calc']=="Expiring Soon"], use_container_width=True)
+                with t2: st.dataframe(prod_df[prod_df['Status_Calc']=="Expired"], use_container_width=True)
+            else: st.info("Renewal Date column missing.")
+        else: st.info("Database empty.")
 
+    # 2. SIM MANAGER
     elif menu == "SIM Manager":
         st.subheader("📶 SIM Inventory")
         with st.form("add_sim"):
@@ -434,295 +411,211 @@ def main():
                 elif append_to_sheet("Sims", {"SIM Number": s_num, "Provider": s_prov, "Status": "Available"}): st.success("Added"); st.rerun()
         st.dataframe(sim_df, use_container_width=True)
 
+    # 3. NEW DISPATCH ENTRY
     elif menu == "New Dispatch Entry":
         st.subheader("📝 New Dispatch")
-        # --- FIXED DISPATCH FORM LOGIC ---
-        
-        # 1. Device Info
-        st.markdown("### 🛠️ Device & Network")
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            sn = st.text_input("Product S/N (Required)")
-            oem = st.text_input("OEM S/N")
-        with c2:
-            prod = st.selectbox("Product Name", BASE_PRODUCT_LIST)
-            model = st.text_input("Model")
-        with c3:
-            conn = st.selectbox("Connectivity", ["4G", "2G", "NB-IoT", "WiFi", "LoRaWAN"])
-            cable = st.text_input("Cable Length")
-        with c4:
-            uid = st.text_input("Device UID")
-            avail_sims = get_clean_list(sim_df[sim_df["Status"] == "Available"], "SIM Number")
-            sim_opts = ["None"] + avail_sims + ["➕ Add New SIM..."]
-            sim_sel = st.selectbox("SIM Card", sim_opts)
-
-        final_sim_num = ""
-        final_sim_prov = "VI"
-        
-        if sim_sel == "➕ Add New SIM...":
-            c_s1, c_s2 = st.columns(2)
-            with c_s1: final_sim_num = st.text_input("Enter New SIM Number")
-            with c_s2: final_sim_prov = st.selectbox("Provider", ["VI", "AIRTEL", "JIO", "BSNL", "Other"])
-        elif sim_sel != "None":
-            final_sim_num = sim_sel
-            if not sim_df.empty:
-                match = sim_df[sim_df["SIM Number"] == final_sim_num]
-                if not match.empty: final_sim_prov = match.iloc[0]["Provider"]
-
-        st.divider()
-
-        # 2. Client & Partner
-        st.markdown("### 👥 Client & Partner")
-        col_p, col_c, col_i, col_d = st.columns(4)
-
-        with col_p:
-            avail_partners = get_clean_list(prod_df, "Channel Partner")
-            partner_opts = ["Select..."] + avail_partners + ["➕ Create New..."]
-            p_sel = st.selectbox("Channel Partner", partner_opts)
-            final_partner = st.text_input("Enter Partner Name", placeholder="Type name...") if p_sel == "➕ Create New..." else (p_sel if p_sel != "Select..." else "")
-
-        with col_c:
-            avail_clients = get_clean_list(client_df, "Client Name")
-            client_opts = ["Select..."] + avail_clients + ["➕ Create New..."]
-            c_sel = st.selectbox("End User (Client)", client_opts)
-            final_client = st.text_input("Enter Client Name", placeholder="Type name...") if c_sel == "➕ Create New..." else (c_sel if c_sel != "Select..." else "")
-
-        with col_i:
-            avail_inds = get_clean_list(prod_df, "Industry Category")
-            ind_opts = ["Select..."] + avail_inds + ["➕ Create New..."]
-            i_sel = st.selectbox("Industry", ind_opts)
-            final_ind = st.text_input("Enter Industry", placeholder="Type category...") if i_sel == "➕ Create New..." else (i_sel if i_sel != "Select..." else "")
-
-        with col_d:
-            install_d = st.date_input("Installation Date")
-            valid = st.number_input("Validity (Months)", 1, 60, 12)
-            activ_d = st.date_input("Activation Date")
-
-        st.markdown("---")
-        
-        if st.button("💾 Save Dispatch Entry", type="primary", use_container_width=True):
-            missing_fields = []
-            if not sn: missing_fields.append("S/N")
-            if not final_client: missing_fields.append("Client")
+        with st.form("dispatch_form"):
+            st.markdown("### 🛠️ Device & Network")
+            c1, c2, c3, c4 = st.columns(4)
+            sn = c1.text_input("Product S/N (Required)")
+            oem = c1.text_input("OEM S/N")
+            prod = c2.selectbox("Product Name", BASE_PRODUCT_LIST)
+            model = c2.text_input("Model")
+            conn = c3.selectbox("Connectivity", ["4G", "2G", "NB-IoT", "WiFi", "LoRaWAN"])
+            cable = c3.text_input("Cable Length")
+            uid = c4.text_input("Device UID")
             
-            if missing_fields:
-                st.error(f"Missing required fields: {', '.join(missing_fields)}")
-            else:
-                sn_list = prod_df["S/N"].values if "S/N" in prod_df.columns else []
-                if sn in sn_list:
-                    st.error("S/N already exists!")
+            st.markdown("### 👥 Client & Partner")
+            col_p, col_c, col_i, col_d = st.columns(4)
+            partner = col_p.text_input("Channel Partner")
+            client = col_c.text_input("Client Name (Required)")
+            industry = col_i.text_input("Industry Category")
+            install_d = col_d.date_input("Installation Date")
+            valid = col_d.number_input("Validity (Months)", 1, 60, 12)
+            activ_d = col_d.date_input("Activation Date")
+
+            # SIM Logic inside form (Simplified for stability)
+            st.divider()
+            st.markdown("### 📶 SIM Selection")
+            sim_manual = st.text_input("SIM Number (Leave empty if None)")
+            sim_prov = st.selectbox("SIM Provider", ["VI", "AIRTEL", "JIO", "BSNL"])
+
+            if st.form_submit_button("💾 Save Dispatch"):
+                if not sn or not client: st.error("S/N and Client are required!")
+                elif sn in prod_df["S/N"].values: st.error("S/N already exists!")
                 else:
                     renew_date = calculate_renewal(activ_d, valid)
                     new_prod = {
                         "S/N": sn, "OEM S/N": oem, "Product Name": prod, "Model": model,
-                        "Connectivity (2G/4G)": conn, "Cable Length": cable,
-                        "Installation Date": str(install_d), "Activation Date": str(activ_d), 
-                        "Validity (Months)": valid, "Renewal Date": str(renew_date), 
-                        "Device UID": uid, "SIM Number": final_sim_num, "SIM Provider": final_sim_prov,
-                        "Channel Partner": final_partner, "End User": final_client, "Industry Category": final_ind
+                        "Connectivity (2G/4G)": conn, "Cable Length": cable, "Installation Date": str(install_d),
+                        "Activation Date": str(activ_d), "Validity (Months)": valid, "Renewal Date": str(renew_date),
+                        "Device UID": uid, "SIM Number": sim_manual, "SIM Provider": sim_prov,
+                        "Channel Partner": partner, "End User": client, "Industry Category": industry
                     }
-                    
                     if append_to_sheet("Products", new_prod):
-                        if c_sel == "➕ Create New..." and final_client:
-                             append_to_sheet("Clients", {"Client Name": final_client})
-                        
-                        if final_sim_num:
-                            sim_db_list = sim_df["SIM Number"].values if "SIM Number" in sim_df.columns else []
-                            if final_sim_num in sim_db_list: 
-                                update_sim_status(final_sim_num, "Used", sn)
-                            else: 
-                                append_to_sheet("Sims", {"SIM Number": final_sim_num, "Provider": final_sim_prov, "Status": "Used", "Used In S/N": sn, "Entry Date": str(date.today())})
-                        st.success("✅ Dispatch Saved Successfully!"); st.balloons(); st.rerun()
+                        append_to_sheet("Clients", {"Client Name": client})
+                        if sim_manual:
+                            if sim_manual in sim_df["SIM Number"].values: update_sim_status(sim_manual, "Used", sn)
+                            else: append_to_sheet("Sims", {"SIM Number": sim_manual, "Provider": sim_prov, "Status": "Used", "Used In S/N": sn})
+                        st.success("Saved!"); st.rerun()
 
-    # --- RESTRUCTURED SUBSCRIPTION MANAGER ---
+    # 4. SUBSCRIPTION MANAGER
     elif menu == "Subscription Manager":
         st.subheader("🔄 Subscription & Quotation Manager")
-        
-        if prod_df.empty:
-            st.info("No product data available.")
-        else:
+        if not prod_df.empty and 'Renewal Date' in prod_df.columns:
             prod_df['Status_Calc'] = prod_df['Renewal Date'].apply(check_expiry_status)
             exp_df = prod_df[prod_df['Status_Calc'].isin(["Expiring Soon", "Expired"])].copy()
             
-            if exp_df.empty:
-                st.success("✅ Good news! No devices need renewal.")
+            if exp_df.empty: st.success("✅ Good news! No devices need renewal.")
             else:
-                # --- TABS FOR SINGLE VS BULK ---
                 tab_single, tab_bulk = st.tabs(["📱 Individual Device Renewal", "🏢 Bulk / Client Renewal"])
                 
-                # --- TAB 1: INDIVIDUAL ---
                 with tab_single:
                     st.markdown("##### Manage Specific Device")
-                    exp_df['Label'] = exp_df['S/N'] + " | " + exp_df['End User'] + " (" + exp_df['Status_Calc'] + ")"
+                    exp_df['Label'] = exp_df['S/N'] + " | " + exp_df['End User']
                     selected_label = st.selectbox("Select Device", exp_df['Label'].tolist())
-                    
                     selected_sn = selected_label.split(" | ")[0]
                     row = exp_df[exp_df['S/N'] == selected_sn].iloc[0]
                     
-                    c_i1, c_i2, c_i3 = st.columns(3)
-                    c_i1.info(f"**Product:** {row.get('Product Name')}")
-                    c_i2.info(f"**Client:** {row.get('End User')}")
-                    c_i3.error(f"**Expires:** {row.get('Renewal Date')}")
+                    st.info(f"Product: {row.get('Product Name')} | Client: {row.get('End User')} | Expires: {row.get('Renewal Date')}")
                     
-                    # 1. Quote
-                    with st.expander("📄 Generate Quote", expanded=True):
+                    with st.expander("📄 Generate Quote"):
                         with st.form("single_quote"):
-                            sq1, sq2 = st.columns(2)
-                            s_rate = sq1.number_input("Amount (INR)", value=2500.0, step=100.0)
-                            s_valid = sq2.date_input("Valid Until", date.today() + relativedelta(days=15))
-                            if st.form_submit_button("Generate & Preview"):
-                                # Fetch full client details for PDF
-                                client_name = row.get('End User')
-                                client_details = {"Client Name": client_name}
+                            s_rate = st.number_input("Amount (INR)", value=2500.0)
+                            s_valid = st.date_input("Valid Until", date.today() + relativedelta(days=15))
+                            if st.form_submit_button("Generate"):
+                                c_det = {"Client Name": row.get('End User')}
                                 if not client_df.empty:
-                                    c_row = client_df[client_df["Client Name"] == client_name]
-                                    if not c_row.empty: client_details = c_row.iloc[0].to_dict()
+                                    c_match = client_df[client_df["Client Name"] == row.get('End User')]
+                                    if not c_match.empty: c_det = c_match.iloc[0].to_dict()
+                                
+                                d_list = [{"sn": selected_sn, "product": row.get('Product Name'), "model": row.get('Model', '-'), "renewal": row.get('Renewal Date')}]
+                                st.session_state['sq_data'] = {"client": c_det, "devices": d_list, "rate": s_rate, "valid": s_valid}
+                                st.success("Ready to Email!")
 
-                                device_list = [{"sn": selected_sn, "product": row.get('Product Name'), "model": row.get('Model', '-'), "renewal": row.get('Renewal Date')}]
-                                st.session_state['single_quote_data'] = {"client": client_details, "devices": device_list, "rate": s_rate, "valid": s_valid}
-                                st.success("Quote Ready! See Email section.")
+                    if 'sq_data' in st.session_state:
+                        with st.expander("📧 Email Quote"):
+                            sq = st.session_state['sq_data']
+                            se_to = st.text_input("To", value=sq['client'].get('Email', ''))
+                            if st.button("Send"):
+                                pdf = create_quotation_pdf(sq['client'], sq['devices'], sq['rate'], sq['valid'])
+                                if send_email_with_attachment(se_to, f"Renewal - {selected_sn}", "Please find attached.", pdf, "Quote.pdf"):
+                                    st.success("Sent!")
+                                    del st.session_state['sq_data']
 
-                    # 2. Email (With Edit Capability)
-                    if 'single_quote_data' in st.session_state:
-                        with st.expander("📧 Email Quote", expanded=True):
-                            sq_data = st.session_state['single_quote_data']
-                            client_info = sq_data['client']
-                            client_email = client_info.get("Email", "")
-                            
-                            se_to = st.text_input("To Email", value=client_email, key="se_to")
-                            se_sub = st.text_input("Subject", value=f"Renewal Quote - {selected_sn}", key="se_sub")
-                            se_body = st.text_area("Message Body", value=f"Dear {client_info['Client Name']},\n\nPlease find attached the renewal quotation for device {selected_sn}.\n\nRegards,\nOrcatech Enterprises", key="se_body", height=150)
-                            
-                            if st.button("Send Email", key="se_btn"):
-                                with st.spinner("Sending..."):
-                                    pdf = create_quotation_pdf(client_info, sq_data['devices'], sq_data['rate'], sq_data['valid'])
-                                    if send_email_with_attachment(se_to, se_sub, se_body, pdf, f"Quote_{selected_sn}.pdf"):
-                                        st.success("Sent!")
-                                        del st.session_state['single_quote_data']
-
-                    # 3. Update DB
-                    with st.expander("📅 Update Renewal Date (Finalize)", expanded=True):
+                    with st.expander("📅 Update Renewal Date"):
                         with st.form("single_renew"):
-                            rn1, rn2 = st.columns(2)
-                            new_st = rn1.date_input("New Start Date", date.today())
-                            new_dur = rn2.number_input("Months", value=12)
-                            if st.form_submit_button("Update Database"):
+                            new_st = st.date_input("New Start", date.today())
+                            new_dur = st.number_input("Months", value=12)
+                            if st.form_submit_button("Update DB"):
                                 new_end = calculate_renewal(new_st, new_dur)
                                 if update_product_subscription(selected_sn, str(new_st), new_dur, str(new_end)):
-                                    st.success(f"Updated {selected_sn}!"); st.rerun()
+                                    st.success("Updated!"); st.rerun()
 
-                # --- TAB 2: BULK / CLIENT ---
                 with tab_bulk:
                     st.markdown("##### Manage All Devices for a Company")
                     clients_list = get_clean_list(exp_df, "End User")
                     sel_client = st.selectbox("Select Company", clients_list)
-                    
                     client_devs = exp_df[exp_df["End User"] == sel_client]
                     st.dataframe(client_devs[["S/N", "Product Name", "Renewal Date", "Status_Calc"]], use_container_width=True)
-                    st.info(f"Total Devices: {len(client_devs)}")
                     
-                    # 1. Quote
-                    with st.expander("📄 Generate Bulk Quote", expanded=True):
+                    with st.expander("📄 Generate Bulk Quote"):
                         with st.form("bulk_quote"):
-                            bq1, bq2 = st.columns(2)
-                            b_rate = bq1.number_input("Rate Per Device (INR)", value=2500.0, step=100.0)
-                            b_valid = bq2.date_input("Quote Valid Until", date.today() + relativedelta(days=15))
-                            if st.form_submit_button("Generate Bulk Quote"):
-                                # Fetch full client details
-                                client_details = {"Client Name": sel_client}
+                            b_rate = st.number_input("Rate Per Device", value=2500.0)
+                            b_valid = st.date_input("Valid Until", date.today() + relativedelta(days=15))
+                            if st.form_submit_button("Generate"):
+                                c_det = {"Client Name": sel_client}
                                 if not client_df.empty:
-                                    c_row = client_df[client_df["Client Name"] == sel_client]
-                                    if not c_row.empty: client_details = c_row.iloc[0].to_dict()
-
+                                    c_match = client_df[client_df["Client Name"] == sel_client]
+                                    if not c_match.empty: c_det = c_match.iloc[0].to_dict()
+                                
                                 d_list = []
                                 for _, r in client_devs.iterrows():
                                     d_list.append({"sn": r['S/N'], "product": r.get('Product Name'), "model": r.get('Model', '-'), "renewal": r.get('Renewal Date')})
-                                
-                                st.session_state['bulk_quote_data'] = {"client": client_details, "devices": d_list, "rate": b_rate, "valid": b_valid}
-                                st.success(f"Quote generated for {len(d_list)} devices.")
+                                st.session_state['bq_data'] = {"client": c_det, "devices": d_list, "rate": b_rate, "valid": b_valid}
+                                st.success("Ready to Email!")
 
-                    # 2. Email (With Edit Capability)
-                    if 'bulk_quote_data' in st.session_state:
-                        with st.expander("📧 Email Bulk Quote", expanded=True):
-                            bq_data = st.session_state['bulk_quote_data']
-                            client_info = bq_data['client']
-                            c_mail = client_info.get("Email", "")
-                            
-                            be_to = st.text_input("To Email", value=c_mail, key="be_to")
-                            be_sub = st.text_input("Subject", value=f"Bulk Renewal Quote - {client_info['Client Name']}", key="be_sub")
-                            be_body = st.text_area("Message Body", value=f"Dear {client_info['Client Name']},\n\nPlease find attached the bulk renewal quotation for your {len(bq_data['devices'])} devices.\n\nRegards,\nOrcatech Enterprises", key="be_body", height=150)
-                            
-                            if st.button("Send Bulk Email", key="be_btn"):
-                                with st.spinner("Sending..."):
-                                    pdf = create_quotation_pdf(client_info, bq_data['devices'], bq_data['rate'], bq_data['valid'])
-                                    if send_email_with_attachment(be_to, be_sub, be_body, pdf, f"Quote_{client_info['Client Name']}.pdf"):
-                                        st.success("Sent!")
-                                        del st.session_state['bulk_quote_data']
+                    if 'bq_data' in st.session_state:
+                        with st.expander("📧 Email Bulk Quote"):
+                            bq = st.session_state['bq_data']
+                            be_to = st.text_input("To", value=bq['client'].get('Email', ''))
+                            if st.button("Send Bulk"):
+                                pdf = create_quotation_pdf(bq['client'], bq['devices'], bq['rate'], bq['valid'])
+                                if send_email_with_attachment(be_to, f"Bulk Renewal - {sel_client}", "Please find attached.", pdf, "Quote.pdf"):
+                                    st.success("Sent!")
+                                    del st.session_state['bq_data']
 
-                    # 3. Update DB
-                    with st.expander("📅 Bulk Update Renewal (Finalize)", expanded=True):
+                    with st.expander("📅 Bulk Update Renewal"):
                         with st.form("bulk_renew"):
-                            br1, br2 = st.columns(2)
-                            b_start = br1.date_input("New Start Date", date.today())
-                            b_dur = br2.number_input("Months", value=12)
-                            if st.form_submit_button("Update ALL Devices"):
+                            b_start = st.date_input("New Start", date.today())
+                            b_dur = st.number_input("Months", value=12)
+                            if st.form_submit_button("Update ALL"):
                                 b_end = calculate_renewal(b_start, b_dur)
                                 cnt = 0
                                 for sn in client_devs['S/N'].tolist():
                                     if update_product_subscription(sn, str(b_start), b_dur, str(b_end)): cnt += 1
-                                st.success(f"Successfully updated {cnt} devices!"); st.rerun()
+                                st.success(f"Updated {cnt} devices!"); st.rerun()
+        else: st.info("No product data available.")
 
-    elif menu == "Channel Partner Analytics":
-        st.subheader("🤝 Channel Partner Performance")
-        if not prod_df.empty and "Channel Partner" in prod_df.columns:
-            # Ensure Status is calculated
-            if "Status_Calc" not in prod_df.columns:
-                prod_df['Status_Calc'] = prod_df['Renewal Date'].apply(check_expiry_status)
-
-            # Filter valid partners
-            partner_df = prod_df[prod_df["Channel Partner"].str.strip() != ""]
-
-            if not partner_df.empty:
-                # 1. TOP LEVEL METRICS
-                top_partner = partner_df["Channel Partner"].value_counts().idxmax()
-                total_partners = partner_df["Channel Partner"].nunique()
-                
-                m1, m2 = st.columns(2)
-                m1.metric("Total Active Partners", total_partners)
-                m2.metric("🏆 Top Performer", top_partner)
-
-                st.divider()
-
-                # 2. STACKED BAR CHART (Active vs Expired)
-                # Group by Partner AND Status
-                partner_status_counts = partner_df.groupby(["Channel Partner", "Status_Calc"]).size().reset_index(name='Count')
-                
-                fig_part = px.bar(
-                    partner_status_counts, 
-                    x="Channel Partner", 
-                    y="Count", 
-                    color="Status_Calc", 
-                    title="Installations by Partner (Status Breakdown)",
-                    color_discrete_map={"Active": "green", "Expiring Soon": "orange", "Expired": "red"},
-                    text_auto=True
-                )
-                st.plotly_chart(fig_part, use_container_width=True)
-
-                # 3. DRILL DOWN
-                st.subheader("🔍 Partner Drill-Down")
-                selected_partner = st.selectbox("Select Partner to View Details", sorted(partner_df["Channel Partner"].unique()))
-                
-                if selected_partner:
-                    specific_data = partner_df[partner_df["Channel Partner"] == selected_partner]
-                    st.info(f"Showing {len(specific_data)} devices installed by **{selected_partner}**")
-                    st.dataframe(
-                        specific_data[["S/N", "End User", "Product Name", "Installation Date", "Renewal Date", "Status_Calc"]], 
-                        use_container_width=True
-                    )
-            else:
-                st.info("No Channel Partner data found.")
+    # 5. INSTALLATION LIST (FIXED)
+    elif menu == "Installation List":
+        st.subheader("🔎 Installation Repository")
+        search = st.text_input("Search")
+        if search:
+            mask = prod_df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
+            st.dataframe(prod_df[mask], use_container_width=True)
         else:
-            st.info("No Data.")
+            st.dataframe(prod_df, use_container_width=True)
+
+    # 6. CLIENT MASTER (FIXED)
+    elif menu == "Client Master":
+        st.subheader("👥 Client Master")
+        st.dataframe(client_df, use_container_width=True)
+        # Edit logic kept simple for stability
+        clients = get_clean_list(client_df, "Client Name")
+        if clients:
+            with st.expander("Edit Client Details"):
+                c_edit = st.selectbox("Select Client", clients)
+                row = client_df[client_df["Client Name"] == c_edit].iloc[0]
+                with st.form("edit_c"):
+                    nm = st.text_input("Name", value=row["Client Name"])
+                    em = st.text_input("Email", value=row.get("Email", ""))
+                    ph = st.text_input("Phone", value=row.get("Phone Number", ""))
+                    ad = st.text_input("Address", value=row.get("Address", ""))
+                    if st.form_submit_button("Update"):
+                        if update_client_details(c_edit, {"Client Name": nm, "Email": em, "Phone Number": ph, "Address": ad}):
+                            st.success("Updated!"); st.rerun()
+
+    # 7. PARTNER ANALYTICS (UPGRADED)
+    elif menu == "Channel Partner Analytics":
+        st.subheader("🤝 Partner Performance")
+        if not prod_df.empty and "Channel Partner" in prod_df.columns:
+            # 1. Partner Installation Summary Table
+            partner_counts = prod_df["Channel Partner"].value_counts().reset_index()
+            partner_counts.columns = ["Partner Name", "Total Installations"]
+            
+            c1, c2 = st.columns([1, 2])
+            with c1:
+                st.markdown("#### 🏆 Installation Leaderboard")
+                st.dataframe(partner_counts, use_container_width=True, hide_index=True)
+            
+            with c2:
+                st.markdown("#### 📊 Status Breakdown")
+                if "Status_Calc" not in prod_df.columns:
+                    prod_df['Status_Calc'] = prod_df['Renewal Date'].apply(check_expiry_status)
+                
+                status_counts = prod_df.groupby(["Channel Partner", "Status_Calc"]).size().reset_index(name='Count')
+                fig = px.bar(status_counts, x="Channel Partner", y="Count", color="Status_Calc", 
+                             color_discrete_map={"Active": "green", "Expired": "red", "Expiring Soon": "orange"})
+                st.plotly_chart(fig, use_container_width=True)
+
+            st.divider()
+            st.markdown("#### 🔍 Partner Drill-Down")
+            sel_partner = st.selectbox("Select Partner", sorted(prod_df["Channel Partner"].unique()))
+            if sel_partner:
+                specific = prod_df[prod_df["Channel Partner"] == sel_partner]
+                st.dataframe(specific, use_container_width=True)
+        else: st.info("No Partner Data")
 
     elif menu == "IMPORT/EXPORT DB":
         st.subheader("💾 Backup")
