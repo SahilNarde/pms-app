@@ -63,7 +63,10 @@ def get_worksheet(sheet_name, tab_name):
         return None
 
 # --- PDF GENERATOR (PLATYPUS ENGINE) ---
-def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until):
+def create_quotation_pdf(client_details, device_list, rate_per_device, valid_until):
+    """
+    client_details: Dict containing 'Client Name', 'Address', 'Contact Person', 'Email', 'Phone Number'
+    """
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
     elements = []
@@ -90,17 +93,33 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     elements.append(header_table)
     elements.append(Spacer(1, 0.2*inch))
     
-    # 2. Title & Client Info
+    # 2. Title
     elements.append(Paragraph("QUOTATION", styles['Title']))
     elements.append(Spacer(1, 0.2*inch))
 
-    client_info = f"""<b>Bill To:</b><br/>{client_name}<br/><br/>
-    <b>Date:</b> {date.today().strftime('%d-%b-%Y')}<br/>
+    # 3. Bill To Section (Updated with full details)
+    c_name = client_details.get('Client Name', '')
+    c_person = client_details.get('Contact Person', '')
+    c_addr = client_details.get('Address', '').replace('\n', '<br/>')
+    c_phone = client_details.get('Phone Number', '')
+    c_email = client_details.get('Email', '')
+
+    bill_to_html = f"""<b>Bill To:</b><br/>
+    <font size=12><b>{c_name}</b></font><br/>"""
+    
+    if c_person: bill_to_html += f"Attn: {c_person}<br/>"
+    if c_addr: bill_to_html += f"{c_addr}<br/>"
+    if c_phone or c_email: bill_to_html += f"Ph: {c_phone} | Email: {c_email}<br/>"
+    
+    # Date Block
+    date_html = f"""<br/><b>Date:</b> {date.today().strftime('%d-%b-%Y')}<br/>
     <b>Valid Until:</b> {valid_until.strftime('%d-%b-%Y')}"""
+
+    client_info = bill_to_html + date_html
     elements.append(Paragraph(client_info, styles['Normal']))
     elements.append(Spacer(1, 0.2*inch))
 
-    # 3. Items Table
+    # 4. Items Table
     data = [['S/N', 'Product / Model', 'Description', 'Amount (INR)']]
     
     subtotal = 0
@@ -142,7 +161,7 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     elements.append(table)
     elements.append(Spacer(1, 0.3*inch))
 
-    # 4. Bank Details
+    # 5. Bank Details
     bank_info = f"""<b>Bank Details for Payment:</b><br/>
     Account Name: {COMPANY_INFO['acc_name']}<br/>
     Bank Name: {COMPANY_INFO['bank_name']}<br/>
@@ -151,7 +170,7 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     Branch: {COMPANY_INFO['branch']}"""
     elements.append(Paragraph(bank_info, styles['Normal']))
     
-    # 5. Professional Footer
+    # 6. Professional Footer
     elements.append(Spacer(1, 0.5*inch))
     footer_style = ParagraphStyle('Footer', parent=styles['Italic'], fontSize=9, textColor=colors.darkgrey, alignment=TA_CENTER)
     footer_text = "This is a computer-generated document and does not require a physical signature."
@@ -338,7 +357,7 @@ def main():
         
         # Ensure safe DataFrames
         if "S/N" not in prod_df.columns: prod_df = pd.DataFrame(columns=["S/N", "End User", "Renewal Date", "Industry Category", "Installation Date", "Activation Date", "Validity (Months)", "Channel Partner"])
-        if "Client Name" not in client_df.columns: client_df = pd.DataFrame(columns=["Client Name", "Email"])
+        if "Client Name" not in client_df.columns: client_df = pd.DataFrame(columns=["Client Name", "Email", "Phone Number", "Contact Person", "Address"])
         if "SIM Number" not in sim_df.columns: sim_df = pd.DataFrame(columns=["SIM Number", "Status", "Provider"])
     except: st.error("DB Error"); return
 
@@ -409,7 +428,6 @@ def main():
             cable = st.text_input("Cable Length")
         with c4:
             uid = st.text_input("Device UID")
-            # SIM Logic
             avail_sims = get_clean_list(sim_df[sim_df["Status"] == "Available"], "SIM Number")
             sim_opts = ["None"] + avail_sims + ["➕ Add New SIM..."]
             sim_sel = st.selectbox("SIM Card", sim_opts)
@@ -529,27 +547,31 @@ def main():
                             s_rate = sq1.number_input("Amount (INR)", value=2500.0, step=100.0)
                             s_valid = sq2.date_input("Valid Until", date.today() + relativedelta(days=15))
                             if st.form_submit_button("Generate & Preview"):
+                                # Fetch full client details for PDF
+                                client_name = row.get('End User')
+                                client_details = {"Client Name": client_name}
+                                if not client_df.empty:
+                                    c_row = client_df[client_df["Client Name"] == client_name]
+                                    if not c_row.empty: client_details = c_row.iloc[0].to_dict()
+
                                 device_list = [{"sn": selected_sn, "product": row.get('Product Name'), "model": row.get('Model', '-'), "renewal": row.get('Renewal Date')}]
-                                st.session_state['single_quote_data'] = {"client": row.get('End User'), "devices": device_list, "rate": s_rate, "valid": s_valid}
+                                st.session_state['single_quote_data'] = {"client": client_details, "devices": device_list, "rate": s_rate, "valid": s_valid}
                                 st.success("Quote Ready! See Email section.")
 
                     # 2. Email (With Edit Capability)
                     if 'single_quote_data' in st.session_state:
                         with st.expander("📧 Email Quote", expanded=True):
                             sq_data = st.session_state['single_quote_data']
-                            client_name = sq_data['client']
-                            client_email = ""
-                            if not client_df.empty:
-                                match = client_df[client_df["Client Name"] == client_name]
-                                if not match.empty: client_email = match.iloc[0].get("Email", "")
+                            client_info = sq_data['client']
+                            client_email = client_info.get("Email", "")
                             
                             se_to = st.text_input("To Email", value=client_email, key="se_to")
                             se_sub = st.text_input("Subject", value=f"Renewal Quote - {selected_sn}", key="se_sub")
-                            se_body = st.text_area("Message Body", value=f"Dear {client_name},\n\nPlease find attached the renewal quotation for device {selected_sn}.\n\nRegards,\nOrcatech Enterprises", key="se_body", height=150)
+                            se_body = st.text_area("Message Body", value=f"Dear {client_info['Client Name']},\n\nPlease find attached the renewal quotation for device {selected_sn}.\n\nRegards,\nOrcatech Enterprises", key="se_body", height=150)
                             
                             if st.button("Send Email", key="se_btn"):
                                 with st.spinner("Sending..."):
-                                    pdf = create_quotation_pdf(client_name, sq_data['devices'], sq_data['rate'], sq_data['valid'])
+                                    pdf = create_quotation_pdf(client_info, sq_data['devices'], sq_data['rate'], sq_data['valid'])
                                     if send_email_with_attachment(se_to, se_sub, se_body, pdf, f"Quote_{selected_sn}.pdf"):
                                         st.success("Sent!")
                                         del st.session_state['single_quote_data']
@@ -582,29 +604,34 @@ def main():
                             b_rate = bq1.number_input("Rate Per Device (INR)", value=2500.0, step=100.0)
                             b_valid = bq2.date_input("Quote Valid Until", date.today() + relativedelta(days=15))
                             if st.form_submit_button("Generate Bulk Quote"):
+                                # Fetch full client details
+                                client_details = {"Client Name": sel_client}
+                                if not client_df.empty:
+                                    c_row = client_df[client_df["Client Name"] == sel_client]
+                                    if not c_row.empty: client_details = c_row.iloc[0].to_dict()
+
                                 d_list = []
                                 for _, r in client_devs.iterrows():
                                     d_list.append({"sn": r['S/N'], "product": r.get('Product Name'), "model": r.get('Model', '-'), "renewal": r.get('Renewal Date')})
-                                st.session_state['bulk_quote_data'] = {"client": sel_client, "devices": d_list, "rate": b_rate, "valid": b_valid}
+                                
+                                st.session_state['bulk_quote_data'] = {"client": client_details, "devices": d_list, "rate": b_rate, "valid": b_valid}
                                 st.success(f"Quote generated for {len(d_list)} devices.")
 
                     # 2. Email (With Edit Capability)
                     if 'bulk_quote_data' in st.session_state:
                         with st.expander("📧 Email Bulk Quote", expanded=True):
                             bq_data = st.session_state['bulk_quote_data']
-                            c_mail = ""
-                            if not client_df.empty:
-                                m = client_df[client_df["Client Name"] == sel_client]
-                                if not m.empty: c_mail = m.iloc[0].get("Email", "")
+                            client_info = bq_data['client']
+                            c_mail = client_info.get("Email", "")
                             
                             be_to = st.text_input("To Email", value=c_mail, key="be_to")
-                            be_sub = st.text_input("Subject", value=f"Bulk Renewal Quote - {sel_client}", key="be_sub")
-                            be_body = st.text_area("Message Body", value=f"Dear {sel_client},\n\nPlease find attached the bulk renewal quotation for your {len(bq_data['devices'])} devices.\n\nRegards,\nOrcatech Enterprises", key="be_body", height=150)
+                            be_sub = st.text_input("Subject", value=f"Bulk Renewal Quote - {client_info['Client Name']}", key="be_sub")
+                            be_body = st.text_area("Message Body", value=f"Dear {client_info['Client Name']},\n\nPlease find attached the bulk renewal quotation for your {len(bq_data['devices'])} devices.\n\nRegards,\nOrcatech Enterprises", key="be_body", height=150)
                             
                             if st.button("Send Bulk Email", key="be_btn"):
                                 with st.spinner("Sending..."):
-                                    pdf = create_quotation_pdf(sel_client, bq_data['devices'], bq_data['rate'], bq_data['valid'])
-                                    if send_email_with_attachment(be_to, be_sub, be_body, pdf, f"Quote_{sel_client}.pdf"):
+                                    pdf = create_quotation_pdf(client_info, bq_data['devices'], bq_data['rate'], bq_data['valid'])
+                                    if send_email_with_attachment(be_to, be_sub, be_body, pdf, f"Quote_{client_info['Client Name']}.pdf"):
                                         st.success("Sent!")
                                         del st.session_state['bulk_quote_data']
 
