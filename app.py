@@ -298,7 +298,12 @@ def check_expiry_status(renewal_date):
         return "Expired" if days < 0 else ("Expiring Soon" if days <= 30 else "Active")
     except: return "Unknown"
 
+# --- FIXED EXPORT FUNCTION ---
 def convert_all_to_excel(dfs_dict):
+    """
+    Exports multiple DataFrames to a single Excel file with multiple sheets.
+    dfs_dict: {"SheetName": dataframe, ...}
+    """
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         for sheet_name, df in dfs_dict.items():
@@ -363,12 +368,16 @@ def main():
         st.error("Connection Error. Data could not be loaded.")
         return
 
-    st.sidebar.caption(f"📦 Products: {len(prod_df)}")
-    st.sidebar.caption(f"👥 Clients: {len(client_df)}")
-
     BASE_PRODUCT_LIST = ["DWLR", "FM", "OCFM", "ARG", "LM", "LC", "Custom"]
 
     menu = st.sidebar.radio("Go to:", ["Dashboard", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "IMPORT/EXPORT DB"])
+
+    # ADDED STATS TO BOTTOM OF SIDEBAR
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📊 Database Stats")
+    st.sidebar.caption(f"📦 Products: {len(prod_df)}")
+    st.sidebar.caption(f"👥 Clients: {len(client_df)}")
+    st.sidebar.caption(f"📶 SIMs: {len(sim_df)}")
 
     if menu == "Dashboard":
         st.subheader("📊 Analytics Overview")
@@ -421,7 +430,7 @@ def main():
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             sn = st.text_input("Product S/N (Required)")
-            oem = c1.text_input("OEM S/N")
+            oem = st.text_input("OEM S/N")
         with c2:
             prod = st.selectbox("Product Name", BASE_PRODUCT_LIST)
             model = st.text_input("Model")
@@ -524,8 +533,7 @@ def main():
                     if 'sq_data' in st.session_state:
                         with st.expander("📧 Email Quote", expanded=True):
                             sq = st.session_state['sq_data']
-                            # EDITABLE EMAIL FIELDS
-                            se_to = st.text_input("To Email", value=sq['client'].get('Email', ''), key="se_to")
+                            se_to = st.text_input("To", value=sq['client'].get('Email', ''), key="se_to")
                             se_sub = st.text_input("Subject", value=f"Renewal Quote - {selected_sn}", key="se_sub")
                             se_body = st.text_area("Message", value=f"Dear {sq['client'].get('Client Name', 'Client')},\n\nPlease find the renewal quote attached.\n\nRegards,\nOrcatech", height=100, key="se_body")
                             
@@ -568,8 +576,7 @@ def main():
                     if 'bq_data' in st.session_state:
                         with st.expander("📧 Email Bulk Quote", expanded=True):
                             bq = st.session_state['bq_data']
-                            # EDITABLE EMAIL FIELDS
-                            be_to = st.text_input("To Email", value=bq['client'].get('Email', ''), key="be_to")
+                            be_to = st.text_input("To", value=bq['client'].get('Email', ''), key="be_to")
                             be_sub = st.text_input("Subject", value=f"Bulk Renewal Quote - {sel_client}", key="be_sub")
                             be_body = st.text_area("Message", value=f"Dear {sel_client},\n\nPlease find the bulk renewal quote attached.\n\nRegards,\nOrcatech", height=100, key="be_body")
                             
@@ -646,7 +653,6 @@ def main():
 
     elif menu == "IMPORT/EXPORT DB":
         st.subheader("💾 Backup")
-        # FIXED: Export ALL data
         all_data = {"Products": prod_df, "Clients": client_df, "Sims": sim_df}
         st.download_button("Download Full Database (Excel)", convert_all_to_excel(all_data), "PMS_Full_Backup.xlsx")
         
