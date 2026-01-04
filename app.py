@@ -29,7 +29,7 @@ LOGO_FILENAME = "FINAL LOGO.png"
 COMPANY_INFO = {
     "name": "Orcatech Enterprises",
     "address": "Flat No. 102, Mayureshwar Heights, S.No. 24/4,\nJadhavrao Industrial Estate, Nanded City,\nSinhagad Road, Pune 411041",
-    "contact": "sales@orcatech.co.in | Mobile: 9325665554",
+    "contact": "sales@orcatech.co.in | Mobile: 9325665554",  # <--- UPDATED HERE
     "gst": "27AWIPN2502N1ZB",
     "bank_name": "Bank of Maharashtra",
     "acc_name": "ORCATECH ENTERPRISES",
@@ -151,15 +151,9 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     Branch: {COMPANY_INFO['branch']}"""
     elements.append(Paragraph(bank_info, styles['Normal']))
     
-    # 5. Professional Footer (Updated)
+    # 5. Professional Footer
     elements.append(Spacer(1, 0.5*inch))
-    footer_style = ParagraphStyle(
-        'Footer', 
-        parent=styles['Italic'], 
-        fontSize=9, 
-        textColor=colors.darkgrey, 
-        alignment=TA_CENTER
-    )
+    footer_style = ParagraphStyle('Footer', parent=styles['Italic'], fontSize=9, textColor=colors.darkgrey, alignment=TA_CENTER)
     footer_text = "This is a computer-generated document and does not require a physical signature."
     elements.append(Paragraph(footer_text, footer_style))
     
@@ -413,69 +407,129 @@ def main():
                         append_to_sheet("Clients", {"Client Name": client})
                         st.success("Saved!"); st.rerun()
 
-    # --- UPDATED SUBSCRIPTION MANAGER ---
+    # --- RESTRUCTURED SUBSCRIPTION MANAGER ---
     elif menu == "Subscription Manager":
         st.subheader("🔄 Subscription & Quotation Manager")
-        if not prod_df.empty:
+        
+        if prod_df.empty:
+            st.info("No product data available.")
+        else:
             prod_df['Status_Calc'] = prod_df['Renewal Date'].apply(check_expiry_status)
             exp_df = prod_df[prod_df['Status_Calc'].isin(["Expiring Soon", "Expired"])].copy()
+            
             if exp_df.empty:
-                st.success("✅ No devices need renewal.")
+                st.success("✅ Good news! No devices need renewal.")
             else:
-                clients_with_expiry = get_clean_list(exp_df, "End User")
-                selected_client = st.selectbox("Select Client (Company)", clients_with_expiry)
-                client_devices = exp_df[exp_df["End User"] == selected_client]
-                st.info(f"Found {len(client_devices)} expiring devices for **{selected_client}**")
-                st.dataframe(client_devices[["S/N", "Product Name", "Model", "Renewal Date", "Status_Calc"]], use_container_width=True)
+                # --- TABS FOR SINGLE VS BULK ---
+                tab_single, tab_bulk = st.tabs(["📱 Individual Device Renewal", "🏢 Bulk / Client Renewal"])
                 
-                st.divider()
-                st.markdown("### 📄 Create Quotation")
-                with st.form("quote_gen_form"):
-                    c_q1, c_q2 = st.columns(2)
-                    rate_per_device = c_q1.number_input("Subscription Rate Per Device (INR)", min_value=0.0, value=2500.0, step=100.0)
-                    valid_until = c_q2.date_input("Quotation Valid Until", value=date.today() + relativedelta(days=15))
-                    if st.form_submit_button("📜 Generate Quotation & Preview"):
-                        device_list = []
-                        for _, row in client_devices.iterrows():
-                            device_list.append({"sn": row['S/N'], "product": row.get('Product Name', 'Device'), "model": row.get('Model', ''), "renewal": row.get('Renewal Date', '')})
-                        st.session_state['quote_data'] = {"client": selected_client, "devices": device_list, "rate": rate_per_device, "valid": valid_until}
-                        st.success("Quotation Generated! Review below.")
-
-                if 'quote_data' in st.session_state:
-                    q = st.session_state['quote_data']
-                    st.markdown("#### 📧 Email to Client")
-                    c_e1, c_e2 = st.columns(2)
-                    client_email = ""
-                    if not client_df.empty:
-                        match = client_df[client_df["Client Name"] == selected_client]
-                        if not match.empty: client_email = match.iloc[0].get("Email", "")
+                # --- TAB 1: INDIVIDUAL ---
+                with tab_single:
+                    st.markdown("##### Manage Specific Device")
+                    # List format: "S/N | Client | Status"
+                    exp_df['Label'] = exp_df['S/N'] + " | " + exp_df['End User'] + " (" + exp_df['Status_Calc'] + ")"
+                    selected_label = st.selectbox("Select Device", exp_df['Label'].tolist())
                     
-                    email_to = c_e1.text_input("Recipient Email", value=client_email)
-                    email_sub = c_e2.text_input("Subject", value=f"Quotation for Subscription Renewal - {selected_client}")
-                    email_body = st.text_area("Message", value=f"Dear {selected_client},\n\nPlease find attached the quotation for the subscription renewal of your {len(q['devices'])} devices.\n\nKindly process the payment to ensure uninterrupted services.\n\nRegards,\nOrcatech Enterprises")
+                    selected_sn = selected_label.split(" | ")[0]
+                    row = exp_df[exp_df['S/N'] == selected_sn].iloc[0]
                     
-                    if st.button("📨 Send Quotation Now", type="primary"):
-                        if not email_to: st.error("Email required!")
-                        elif "email" not in st.secrets: st.error("Secrets not configured!")
-                        else:
-                            with st.spinner("Generating PDF and Sending..."):
-                                pdf_buffer = create_quotation_pdf(q['client'], q['devices'], q['rate'], q['valid'])
-                                if send_email_with_attachment(email_to, email_sub, email_body, pdf_buffer, f"Quote_{selected_client}.pdf"):
-                                    st.success(f"Quotation sent successfully to {email_to}!")
-                                    del st.session_state['quote_data']
+                    c_i1, c_i2, c_i3 = st.columns(3)
+                    c_i1.info(f"**Product:** {row.get('Product Name')}")
+                    c_i2.info(f"**Client:** {row.get('End User')}")
+                    c_i3.error(f"**Expires:** {row.get('Renewal Date')}")
+                    
+                    # 1. Quote
+                    with st.expander("📄 Generate Quote", expanded=True):
+                        with st.form("single_quote"):
+                            sq1, sq2 = st.columns(2)
+                            s_rate = sq1.number_input("Amount (INR)", value=2500.0, step=100.0)
+                            s_valid = sq2.date_input("Valid Until", date.today() + relativedelta(days=15))
+                            if st.form_submit_button("Generate & Preview"):
+                                device_list = [{"sn": selected_sn, "product": row.get('Product Name'), "model": row.get('Model', '-'), "renewal": row.get('Renewal Date')}]
+                                st.session_state['single_quote'] = {"client": row.get('End User'), "devices": device_list, "rate": s_rate, "valid": s_valid}
+                                st.success("Quote Ready! See Email section.")
 
-                st.divider()
-                st.markdown("### 📅 Bulk Renewal (After Payment)")
-                with st.expander("Update All These Devices"):
-                    with st.form("bulk_renew_form"):
-                        new_start = st.date_input("New Start Date", date.today())
-                        months = st.number_input("Months", value=12)
-                        if st.form_submit_button("✅ Renew All Listed Devices"):
-                            new_end = calculate_renewal(new_start, months)
-                            success_count = 0
-                            for sn in client_devices['S/N'].tolist():
-                                if update_product_subscription(sn, str(new_start), months, str(new_end)): success_count += 1
-                            st.success(f"Updated {success_count} devices successfully!"); st.rerun()
+                    # 2. Email
+                    if 'single_quote' in st.session_state:
+                        with st.expander("📧 Email Quote", expanded=True):
+                            sq_data = st.session_state['single_quote']
+                            client_name = sq_data['client']
+                            client_email = ""
+                            if not client_df.empty:
+                                match = client_df[client_df["Client Name"] == client_name]
+                                if not match.empty: client_email = match.iloc[0].get("Email", "")
+                            
+                            se_to = st.text_input("To Email", value=client_email, key="se_to")
+                            if st.button("Send Email", key="se_btn"):
+                                with st.spinner("Sending..."):
+                                    pdf = create_quotation_pdf(client_name, sq_data['devices'], sq_data['rate'], sq_data['valid'])
+                                    if send_email_with_attachment(se_to, f"Renewal Quote - {selected_sn}", "Please find quote attached.", pdf, f"Quote_{selected_sn}.pdf"):
+                                        st.success("Sent!")
+                                        del st.session_state['single_quote']
+
+                    # 3. Update DB
+                    with st.expander("📅 Update Renewal Date (Finalize)", expanded=True):
+                        with st.form("single_renew"):
+                            rn1, rn2 = st.columns(2)
+                            new_st = rn1.date_input("New Start Date", date.today())
+                            new_dur = rn2.number_input("Months", value=12)
+                            if st.form_submit_button("Update Database"):
+                                new_end = calculate_renewal(new_st, new_dur)
+                                if update_product_subscription(selected_sn, str(new_st), new_dur, str(new_end)):
+                                    st.success(f"Updated {selected_sn}!"); st.rerun()
+
+                # --- TAB 2: BULK / CLIENT ---
+                with tab_bulk:
+                    st.markdown("##### Manage All Devices for a Company")
+                    clients_list = get_clean_list(exp_df, "End User")
+                    sel_client = st.selectbox("Select Company", clients_list)
+                    
+                    client_devs = exp_df[exp_df["End User"] == sel_client]
+                    st.dataframe(client_devs[["S/N", "Product Name", "Renewal Date", "Status_Calc"]], use_container_width=True)
+                    st.info(f"Total Devices: {len(client_devs)}")
+                    
+                    # 1. Quote
+                    with st.expander("📄 Generate Bulk Quote", expanded=True):
+                        with st.form("bulk_quote"):
+                            bq1, bq2 = st.columns(2)
+                            b_rate = bq1.number_input("Rate Per Device (INR)", value=2500.0, step=100.0)
+                            b_valid = bq2.date_input("Quote Valid Until", date.today() + relativedelta(days=15))
+                            if st.form_submit_button("Generate Bulk Quote"):
+                                d_list = []
+                                for _, r in client_devs.iterrows():
+                                    d_list.append({"sn": r['S/N'], "product": r.get('Product Name'), "model": r.get('Model', '-'), "renewal": r.get('Renewal Date')})
+                                st.session_state['bulk_quote'] = {"client": sel_client, "devices": d_list, "rate": b_rate, "valid": b_valid}
+                                st.success(f"Quote generated for {len(d_list)} devices.")
+
+                    # 2. Email
+                    if 'bulk_quote' in st.session_state:
+                        with st.expander("📧 Email Bulk Quote", expanded=True):
+                            bq_data = st.session_state['bulk_quote']
+                            c_mail = ""
+                            if not client_df.empty:
+                                m = client_df[client_df["Client Name"] == sel_client]
+                                if not m.empty: c_mail = m.iloc[0].get("Email", "")
+                            
+                            be_to = st.text_input("To Email", value=c_mail, key="be_to")
+                            if st.button("Send Bulk Email", key="be_btn"):
+                                with st.spinner("Sending..."):
+                                    pdf = create_quotation_pdf(sel_client, bq_data['devices'], bq_data['rate'], bq_data['valid'])
+                                    if send_email_with_attachment(be_to, f"Bulk Renewal Quote - {sel_client}", f"Please find attached the renewal quote for {len(bq_data['devices'])} devices.", pdf, f"Quote_{sel_client}.pdf"):
+                                        st.success("Sent!")
+                                        del st.session_state['bulk_quote']
+
+                    # 3. Update DB
+                    with st.expander("📅 Bulk Update Renewal (Finalize)", expanded=True):
+                        with st.form("bulk_renew"):
+                            br1, br2 = st.columns(2)
+                            b_start = br1.date_input("New Start Date", date.today())
+                            b_dur = br2.number_input("Months", value=12)
+                            if st.form_submit_button("Update ALL Devices"):
+                                b_end = calculate_renewal(b_start, b_dur)
+                                cnt = 0
+                                for sn in client_devs['S/N'].tolist():
+                                    if update_product_subscription(sn, str(b_start), b_dur, str(b_end)): cnt += 1
+                                st.success(f"Successfully updated {cnt} devices!"); st.rerun()
 
     elif menu == "Installation List":
         st.subheader("🔎 Installation Repository")
