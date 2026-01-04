@@ -6,6 +6,9 @@ import plotly.express as px
 import gspread
 from google.oauth2.service_account import Credentials
 import io
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # --- CONFIGURATION ---
 SHEET_NAME = "PMS DB"
@@ -41,20 +44,41 @@ def get_worksheet(sheet_name, tab_name):
         print(f"❌ Error opening tab '{tab_name}': {e}")
         return None
 
-# --- DATA HANDLING ---
+# --- EMAIL FUNCTION ---
+def send_email(to_email, subject, body):
+    try:
+        # Load email config from secrets
+        email_conf = st.secrets["email"]
+        smtp_server = email_conf["smtp_server"]
+        smtp_port = email_conf["smtp_port"]
+        sender_email = email_conf["sender_email"]
+        password = email_conf["app_password"]
 
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(sender_email, password)
+        text = msg.as_string()
+        server.sendmail(sender_email, to_email, text)
+        server.quit()
+        return True
+    except Exception as e:
+        st.error(f"Failed to send email: {e}")
+        return False
+
+# --- DATA HANDLING ---
 @st.cache_data(ttl=60)
 def load_data(tab_name):
-    """
-    ROBUST LOAD: Uses get_all_values() instead of get_all_records() 
-    to prevent type errors and missing data.
-    """
     ws = get_worksheet(SHEET_NAME, tab_name)
     if not ws: return pd.DataFrame()
     try:
         data = ws.get_all_values()
         if not data: return pd.DataFrame()
-            
         headers = data[0]
         rows = data[1:]
         df = pd.DataFrame(rows, columns=headers)
@@ -80,12 +104,10 @@ def append_to_sheet(tab_name, data_dict):
             headers = list(data_dict.keys())
             ws.append_row(headers)
             raw_headers = headers
-            
         row_values = []
         for h in raw_headers:
             val = data_dict.get(h.strip(), "")
             row_values.append(str(val))
-            
         ws.append_row(row_values)
         load_data.clear()
         return True
@@ -101,11 +123,9 @@ def bulk_append_to_sheet(tab_name, df):
         if not sheet_headers:
             st.error(f"Tab '{tab_name}' is empty. Add headers first.")
             return False
-            
         for h in sheet_headers:
             h_clean = h.strip()
             if h_clean not in df.columns: df[h_clean] = ""
-        
         clean_headers = [h.strip() for h in sheet_headers]
         df_sorted = df[clean_headers]
         data_to_upload = df_sorted.astype(str).values.tolist()
@@ -189,14 +209,11 @@ def check_login(username, password):
     if not ws: return None
     data = ws.get_all_values()
     if not data: return None
-    
     headers = data[0]
     rows = data[1:]
     df = pd.DataFrame(rows, columns=headers)
     df.columns = df.columns.str.strip()
-    
     if 'Username' not in df.columns or 'Password' not in df.columns: return None
-
     user_match = df[(df['Username'].str.strip() == username.strip()) & (df['Password'].str.strip() == password.strip())]
     if not user_match.empty: return user_match.iloc[0]['Name']
     return None
@@ -238,16 +255,14 @@ def main():
     st.title("🏭 Product Management System (Cloud)")
     st.markdown("---")
 
-    # --- LOAD DATA & SANITIZE ---
     try:
         prod_df = load_data("Products")
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
         
         if "S/N" not in prod_df.columns: prod_df = pd.DataFrame(columns=["S/N", "End User", "Renewal Date", "Industry Category", "Installation Date", "Activation Date", "Validity (Months)"])
-        if "Client Name" not in client_df.columns: client_df = pd.DataFrame(columns=["Client Name"])
+        if "Client Name" not in client_df.columns: client_df = pd.DataFrame(columns=["Client Name", "Email"])
         if "SIM Number" not in sim_df.columns: sim_df = pd.DataFrame(columns=["SIM Number", "Status", "Provider"])
-
     except Exception as e:
         st.error("⚠️ Data connection error. Please refresh.")
         return
@@ -270,7 +285,6 @@ def main():
             c3.metric("Expiring Soon", len(prod_df[prod_df['Status_Calc'] == "Expiring Soon"]))
             c4.metric("Expired", len(prod_df[prod_df['Status_Calc'] == "Expired"]))
             st.divider()
-            
             col_g1, col_g2 = st.columns(2)
             with col_g1:
                 if "Industry Category" in prod_df.columns:
@@ -282,7 +296,6 @@ def main():
                     ind_counts.columns = ['Industry Category', 'Count']
                     fig_pie = px.pie(ind_counts, values='Count', names='Industry Category', title="Industry Distribution", hole=0.4)
                     st.plotly_chart(fig_pie, use_container_width=True)
-
             with col_g2:
                 if "Installation Date" in prod_df.columns:
                     trend_df = prod_df.copy()
@@ -293,7 +306,6 @@ def main():
                         trend_data["Month"] = trend_data["Installation Date"].astype(str)
                         fig_trend = px.area(trend_data, x="Month", y="Installations", title="Installation Growth (Monthly)", markers=True, color_discrete_sequence=["#00CC96"])
                         st.plotly_chart(fig_trend, use_container_width=True)
-
             st.markdown("### ⚠️ Alert Center")
             tab_soon, tab_expired = st.tabs(["⏳ Expiring Soon", "❌ Expired"])
             with tab_soon:
@@ -344,7 +356,6 @@ def main():
             avail_sims = get_clean_list(sim_df[sim_df["Status"] == "Available"], "SIM Number") if "Status" in sim_df.columns else []
             sim_opts = ["None"] + avail_sims + ["➕ Add New SIM..."]
             sim_sel = st.selectbox("SIM Card", sim_opts)
-
         final_sim_num, final_sim_prov = "", "VI"
         if sim_sel == "➕ Add New SIM...":
             c_s1, c_s2 = st.columns(2)
@@ -355,7 +366,6 @@ def main():
             if not sim_df.empty:
                 match = sim_df[sim_df["SIM Number"] == final_sim_num]
                 if not match.empty and "Provider" in match.columns: final_sim_prov = match.iloc[0]["Provider"]
-
         st.divider()
         st.markdown("### 👥 Client & Partner")
         col_p, col_c, col_i, col_d = st.columns(4)
@@ -378,7 +388,6 @@ def main():
             install_d = st.date_input("Installation Date")
             valid = st.number_input("Validity (Months)", 1, 60, 12)
             activ_d = st.date_input("Activation Date")
-
         st.markdown("---")
         if st.button("💾 Save Dispatch Entry", type="primary", use_container_width=True):
             if not sn or not final_client: st.error("S/N and Client are required!")
@@ -413,12 +422,41 @@ def main():
                 selected_label = st.selectbox("Select Device to Renew", renew_candidates['Label'].tolist())
                 selected_sn = selected_label.split(" | ")[0]
                 row = renew_candidates[renew_candidates['S/N'] == selected_sn].iloc[0]
+                
+                # --- INFO SECTION ---
                 st.divider()
                 st.markdown(f"**Current Status:** :red[{row['Status_Calc']}]")
                 c_info1, c_info2, c_info3 = st.columns(3)
                 c_info1.info(f"**Product:** {row.get('Product Name', 'N/A')}")
                 c_info2.info(f"**Current Expiry:** {row.get('Renewal Date', 'N/A')}")
                 c_info3.info(f"**Client:** {row.get('End User', 'N/A')}")
+
+                # --- EMAIL REMINDER SECTION ---
+                st.markdown("### 📢 Send Reminder")
+                with st.expander("📧 Email Notification Settings", expanded=False):
+                    client_name = row.get('End User', 'Client')
+                    client_email = ""
+                    # Try to fetch email from Client Master
+                    if "Email" in client_df.columns:
+                        match_client = client_df[client_df["Client Name"] == client_name]
+                        if not match_client.empty:
+                            client_email = match_client.iloc[0]["Email"]
+                    
+                    email_to = st.text_input("Recipient Email", value=client_email)
+                    email_subject = st.text_input("Subject", value=f"Subscription Expiry Reminder - Device {selected_sn}")
+                    email_body = st.text_area("Message", value=f"Dear {client_name},\n\nThis is a reminder that the subscription for your device ({row.get('Product Name', 'Device')}), S/N: {selected_sn}, is set to expire on {row.get('Renewal Date', 'soon')}.\n\nPlease contact us to renew your services.\n\nBest Regards,\nAdmin Team")
+                    
+                    if st.button("📨 Send Email Now"):
+                        if not email_to:
+                            st.error("Please enter a recipient email.")
+                        elif "email" not in st.secrets:
+                            st.error("Email secrets not found! Configure secrets.toml first.")
+                        else:
+                            with st.spinner("Sending email..."):
+                                if send_email(email_to, email_subject, email_body):
+                                    st.success("Email sent successfully!")
+
+                # --- RENEWAL SECTION ---
                 st.markdown("### 📅 Update Subscription")
                 with st.form("renew_form"):
                     c_new1, c_new2 = st.columns(2)
@@ -432,7 +470,7 @@ def main():
                         else: st.error("Failed to update Google Sheet.")
         else: st.info("No product data available.")
 
-    # 5. INSTALLATION LIST (SEARCH ADDED)
+    # 5. INSTALLATION LIST
     elif menu == "Installation List":
         st.subheader("🔎 Installation Repository")
         search_term = st.text_input("🔍 Search Database", placeholder="Type S/N, Client, or UID...")
@@ -440,8 +478,7 @@ def main():
             mask = prod_df.astype(str).apply(lambda x: x.str.contains(search_term, case=False)).any(axis=1)
             display_df = prod_df[mask]
             st.info(f"Found {len(display_df)} records matching '{search_term}'")
-        else:
-            display_df = prod_df
+        else: display_df = prod_df
         st.dataframe(display_df, use_container_width=True)
 
     # 6. CLIENT MASTER
