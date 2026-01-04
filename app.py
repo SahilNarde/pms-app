@@ -59,7 +59,6 @@ def get_worksheet(sheet_name, tab_name):
         sh = client.open(sheet_name)
         return sh.worksheet(tab_name)
     except Exception as e:
-        # st.error(f"❌ Error opening tab '{tab_name}': {e}") # Suppressed to avoid UI clutter
         return None
 
 # --- PDF GENERATOR ---
@@ -335,13 +334,11 @@ def main():
     st.title("🏭 Product Management System (Cloud)")
     st.markdown("---")
 
-    # --- ROBUST DATA LOADING WITH FALLBACKS ---
     try:
         prod_df = load_data("Products")
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
         
-        # Fallback: Create Empty DFs with correct columns if load failed or sheet is empty
         if prod_df.empty or "S/N" not in prod_df.columns:
             prod_df = pd.DataFrame(columns=["S/N", "End User", "Product Name", "Model", "Renewal Date", "Industry Category", "Installation Date", "Activation Date", "Validity (Months)", "Channel Partner", "Device UID", "Connectivity (2G/4G)", "Cable Length", "SIM Number", "SIM Provider"])
         
@@ -358,49 +355,44 @@ def main():
     st.sidebar.caption(f"📦 Products: {len(prod_df)}")
     st.sidebar.caption(f"👥 Clients: {len(client_df)}")
 
-    # CONSTANTS
     BASE_PRODUCT_LIST = ["DWLR", "FM", "OCFM", "ARG", "LM", "LC", "Custom"]
 
     menu = st.sidebar.radio("Go to:", ["Dashboard", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "IMPORT/EXPORT DB"])
 
-    # 1. DASHBOARD
     if menu == "Dashboard":
         st.subheader("📊 Analytics Overview")
-        if not prod_df.empty:
-            if 'Renewal Date' in prod_df.columns:
-                prod_df['Status_Calc'] = prod_df['Renewal Date'].apply(check_expiry_status)
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Total", len(prod_df))
-                c2.metric("Active", len(prod_df[prod_df['Status_Calc'] == "Active"]))
-                c3.metric("Expiring", len(prod_df[prod_df['Status_Calc'] == "Expiring Soon"]))
-                c4.metric("Expired", len(prod_df[prod_df['Status_Calc'] == "Expired"]))
-                st.divider()
-                
-                col_g1, col_g2 = st.columns(2)
-                with col_g1:
-                    if "Industry Category" in prod_df.columns:
-                        df_pie = prod_df[~prod_df["Industry Category"].isin(['', 'nan', 'None'])]
-                        if not df_pie.empty:
-                            fig = px.pie(df_pie, names='Industry Category', title="Industry Distribution", hole=0.4)
-                            st.plotly_chart(fig, use_container_width=True)
-                with col_g2:
-                    if "Installation Date" in prod_df.columns:
-                        df_trend = prod_df.copy()
-                        df_trend["Installation Date"] = pd.to_datetime(df_trend["Installation Date"], errors='coerce')
-                        df_trend = df_trend.dropna(subset=["Installation Date"])
-                        if not df_trend.empty:
-                            trend = df_trend.groupby(df_trend["Installation Date"].dt.to_period("M")).size().reset_index(name="Count")
-                            trend["Month"] = trend["Installation Date"].astype(str)
-                            st.plotly_chart(px.area(trend, x="Month", y="Count", title="Monthly Installations", markers=True), use_container_width=True)
-                
-                st.markdown("### ⚠️ Alert Center")
-                t1, t2 = st.tabs(["⏳ Expiring Soon", "❌ Expired"])
-                with t1: st.dataframe(prod_df[prod_df['Status_Calc']=="Expiring Soon"], use_container_width=True)
-                with t2: st.dataframe(prod_df[prod_df['Status_Calc']=="Expired"], use_container_width=True)
-            else: st.info("Renewal Date column missing.")
+        if not prod_df.empty and 'Renewal Date' in prod_df.columns:
+            prod_df['Status_Calc'] = prod_df['Renewal Date'].apply(check_expiry_status)
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Total", len(prod_df))
+            c2.metric("Active", len(prod_df[prod_df['Status_Calc'] == "Active"]))
+            c3.metric("Expiring", len(prod_df[prod_df['Status_Calc'] == "Expiring Soon"]))
+            c4.metric("Expired", len(prod_df[prod_df['Status_Calc'] == "Expired"]))
+            st.divider()
+            
+            col_g1, col_g2 = st.columns(2)
+            with col_g1:
+                if "Industry Category" in prod_df.columns:
+                    df_pie = prod_df[~prod_df["Industry Category"].isin(['', 'nan', 'None'])]
+                    if not df_pie.empty:
+                        fig = px.pie(df_pie, names='Industry Category', title="Industry Distribution", hole=0.4)
+                        st.plotly_chart(fig, use_container_width=True)
+            with col_g2:
+                if "Installation Date" in prod_df.columns:
+                    df_trend = prod_df.copy()
+                    df_trend["Installation Date"] = pd.to_datetime(df_trend["Installation Date"], errors='coerce')
+                    df_trend = df_trend.dropna(subset=["Installation Date"])
+                    if not df_trend.empty:
+                        trend = df_trend.groupby(df_trend["Installation Date"].dt.to_period("M")).size().reset_index(name="Count")
+                        trend["Month"] = trend["Installation Date"].astype(str)
+                        st.plotly_chart(px.area(trend, x="Month", y="Count", title="Monthly Installations", markers=True), use_container_width=True)
+            
+            st.markdown("### ⚠️ Alert Center")
+            t1, t2 = st.tabs(["⏳ Expiring Soon", "❌ Expired"])
+            with t1: st.dataframe(prod_df[prod_df['Status_Calc']=="Expiring Soon"], use_container_width=True)
+            with t2: st.dataframe(prod_df[prod_df['Status_Calc']=="Expired"], use_container_width=True)
         else: st.info("Database empty.")
 
-    # 2. SIM MANAGER
     elif menu == "SIM Manager":
         st.subheader("📶 SIM Inventory")
         with st.form("add_sim"):
@@ -411,72 +403,101 @@ def main():
                 elif append_to_sheet("Sims", {"SIM Number": s_num, "Provider": s_prov, "Status": "Available"}): st.success("Added"); st.rerun()
         st.dataframe(sim_df, use_container_width=True)
 
-    # 3. NEW DISPATCH ENTRY
     elif menu == "New Dispatch Entry":
         st.subheader("📝 New Dispatch")
-        with st.form("dispatch_form"):
-            st.markdown("### 🛠️ Device & Network")
-            c1, c2, c3, c4 = st.columns(4)
-            sn = c1.text_input("Product S/N (Required)")
-            oem = c1.text_input("OEM S/N")
-            prod = c2.selectbox("Product Name", BASE_PRODUCT_LIST)
-            model = c2.text_input("Model")
-            conn = c3.selectbox("Connectivity", ["4G", "2G", "NB-IoT", "WiFi", "LoRaWAN"])
-            cable = c3.text_input("Cable Length")
-            uid = c4.text_input("Device UID")
-            
-            st.markdown("### 👥 Client & Partner")
-            col_p, col_c, col_i, col_d = st.columns(4)
-            partner = col_p.text_input("Channel Partner")
-            client = col_c.text_input("Client Name (Required)")
-            industry = col_i.text_input("Industry Category")
-            install_d = col_d.date_input("Installation Date")
-            valid = col_d.number_input("Validity (Months)", 1, 60, 12)
-            activ_d = col_d.date_input("Activation Date")
+        # FIXED: DROPDOWNS RESTORED
+        st.markdown("### 🛠️ Device & Network")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            sn = st.text_input("Product S/N (Required)")
+            oem = st.text_input("OEM S/N")
+        with c2:
+            prod = st.selectbox("Product Name", BASE_PRODUCT_LIST)
+            model = st.text_input("Model")
+        with c3:
+            conn = st.selectbox("Connectivity", ["4G", "2G", "NB-IoT", "WiFi", "LoRaWAN"])
+            cable = st.text_input("Cable Length")
+        with c4:
+            uid = st.text_input("Device UID")
+            avail_sims = get_clean_list(sim_df[sim_df["Status"] == "Available"], "SIM Number")
+            sim_opts = ["None"] + avail_sims + ["➕ Add New SIM..."]
+            sim_sel = st.selectbox("SIM Card", sim_opts)
 
-            # SIM Logic inside form (Simplified for stability)
-            st.divider()
-            st.markdown("### 📶 SIM Selection")
-            sim_manual = st.text_input("SIM Number (Leave empty if None)")
-            sim_prov = st.selectbox("SIM Provider", ["VI", "AIRTEL", "JIO", "BSNL"])
+        final_sim_num = ""
+        final_sim_prov = "VI"
+        if sim_sel == "➕ Add New SIM...":
+            c_s1, c_s2 = st.columns(2)
+            with c_s1: final_sim_num = st.text_input("Enter New SIM Number")
+            with c_s2: final_sim_prov = st.selectbox("Provider", ["VI", "AIRTEL", "JIO", "BSNL", "Other"])
+        elif sim_sel != "None":
+            final_sim_num = sim_sel
+            if not sim_df.empty:
+                match = sim_df[sim_df["SIM Number"] == final_sim_num]
+                if not match.empty: final_sim_prov = match.iloc[0]["Provider"]
 
-            if st.form_submit_button("💾 Save Dispatch"):
-                if not sn or not client: st.error("S/N and Client are required!")
-                elif sn in prod_df["S/N"].values: st.error("S/N already exists!")
-                else:
-                    renew_date = calculate_renewal(activ_d, valid)
-                    new_prod = {
-                        "S/N": sn, "OEM S/N": oem, "Product Name": prod, "Model": model,
-                        "Connectivity (2G/4G)": conn, "Cable Length": cable, "Installation Date": str(install_d),
-                        "Activation Date": str(activ_d), "Validity (Months)": valid, "Renewal Date": str(renew_date),
-                        "Device UID": uid, "SIM Number": sim_manual, "SIM Provider": sim_prov,
-                        "Channel Partner": partner, "End User": client, "Industry Category": industry
-                    }
-                    if append_to_sheet("Products", new_prod):
-                        append_to_sheet("Clients", {"Client Name": client})
-                        if sim_manual:
-                            if sim_manual in sim_df["SIM Number"].values: update_sim_status(sim_manual, "Used", sn)
-                            else: append_to_sheet("Sims", {"SIM Number": sim_manual, "Provider": sim_prov, "Status": "Used", "Used In S/N": sn})
-                        st.success("Saved!"); st.rerun()
+        st.divider()
+        st.markdown("### 👥 Client & Partner")
+        col_p, col_c, col_i, col_d = st.columns(4)
 
-    # 4. SUBSCRIPTION MANAGER
+        # FIXED: Partner Dropdown
+        with col_p:
+            avail_partners = get_clean_list(prod_df, "Channel Partner")
+            partner_opts = ["Select..."] + avail_partners + ["➕ Create New..."]
+            p_sel = st.selectbox("Channel Partner", partner_opts)
+            final_partner = st.text_input("Enter Partner Name", placeholder="Type name...") if p_sel == "➕ Create New..." else (p_sel if p_sel != "Select..." else "")
+
+        # FIXED: Client Dropdown
+        with col_c:
+            avail_clients = get_clean_list(client_df, "Client Name")
+            client_opts = ["Select..."] + avail_clients + ["➕ Create New..."]
+            c_sel = st.selectbox("End User (Client)", client_opts)
+            final_client = st.text_input("Enter Client Name", placeholder="Type name...") if c_sel == "➕ Create New..." else (c_sel if c_sel != "Select..." else "")
+
+        # FIXED: Industry Dropdown
+        with col_i:
+            avail_inds = get_clean_list(prod_df, "Industry Category")
+            ind_opts = ["Select..."] + avail_inds + ["➕ Create New..."]
+            i_sel = st.selectbox("Industry", ind_opts)
+            final_ind = st.text_input("Enter Industry", placeholder="Type category...") if i_sel == "➕ Create New..." else (i_sel if i_sel != "Select..." else "")
+
+        with col_d:
+            install_d = st.date_input("Installation Date")
+            valid = st.number_input("Validity (Months)", 1, 60, 12)
+            activ_d = st.date_input("Activation Date")
+
+        st.markdown("---")
+        if st.button("💾 Save Dispatch Entry", type="primary", use_container_width=True):
+            if not sn or not final_client: st.error("S/N and Client are required!")
+            elif sn in prod_df["S/N"].values: st.error("S/N already exists!")
+            else:
+                renew_date = calculate_renewal(activ_d, valid)
+                new_prod = {
+                    "S/N": sn, "OEM S/N": oem, "Product Name": prod, "Model": model,
+                    "Connectivity (2G/4G)": conn, "Cable Length": cable, "Installation Date": str(install_d),
+                    "Activation Date": str(activ_d), "Validity (Months)": valid, "Renewal Date": str(renew_date),
+                    "Device UID": uid, "SIM Number": final_sim_num, "SIM Provider": final_sim_prov,
+                    "Channel Partner": final_partner, "End User": final_client, "Industry Category": final_ind
+                }
+                if append_to_sheet("Products", new_prod):
+                    if c_sel == "➕ Create New..." and final_client: append_to_sheet("Clients", {"Client Name": final_client})
+                    if final_sim_num:
+                        if final_sim_num in sim_df["SIM Number"].values: update_sim_status(final_sim_num, "Used", sn)
+                        else: append_to_sheet("Sims", {"SIM Number": final_sim_num, "Provider": final_sim_prov, "Status": "Used", "Used In S/N": sn})
+                    st.success("✅ Dispatch Saved Successfully!"); st.balloons(); st.rerun()
+
     elif menu == "Subscription Manager":
         st.subheader("🔄 Subscription & Quotation Manager")
         if not prod_df.empty and 'Renewal Date' in prod_df.columns:
             prod_df['Status_Calc'] = prod_df['Renewal Date'].apply(check_expiry_status)
             exp_df = prod_df[prod_df['Status_Calc'].isin(["Expiring Soon", "Expired"])].copy()
-            
             if exp_df.empty: st.success("✅ Good news! No devices need renewal.")
             else:
-                tab_single, tab_bulk = st.tabs(["📱 Individual Device Renewal", "🏢 Bulk / Client Renewal"])
-                
+                tab_single, tab_bulk = st.tabs(["📱 Individual Renewal", "🏢 Bulk Renewal"])
                 with tab_single:
-                    st.markdown("##### Manage Specific Device")
                     exp_df['Label'] = exp_df['S/N'] + " | " + exp_df['End User']
                     selected_label = st.selectbox("Select Device", exp_df['Label'].tolist())
                     selected_sn = selected_label.split(" | ")[0]
                     row = exp_df[exp_df['S/N'] == selected_sn].iloc[0]
-                    
                     st.info(f"Product: {row.get('Product Name')} | Client: {row.get('End User')} | Expires: {row.get('Renewal Date')}")
                     
                     with st.expander("📄 Generate Quote"):
@@ -488,7 +509,6 @@ def main():
                                 if not client_df.empty:
                                     c_match = client_df[client_df["Client Name"] == row.get('End User')]
                                     if not c_match.empty: c_det = c_match.iloc[0].to_dict()
-                                
                                 d_list = [{"sn": selected_sn, "product": row.get('Product Name'), "model": row.get('Model', '-'), "renewal": row.get('Renewal Date')}]
                                 st.session_state['sq_data'] = {"client": c_det, "devices": d_list, "rate": s_rate, "valid": s_valid}
                                 st.success("Ready to Email!")
@@ -513,7 +533,6 @@ def main():
                                     st.success("Updated!"); st.rerun()
 
                 with tab_bulk:
-                    st.markdown("##### Manage All Devices for a Company")
                     clients_list = get_clean_list(exp_df, "End User")
                     sel_client = st.selectbox("Select Company", clients_list)
                     client_devs = exp_df[exp_df["End User"] == sel_client]
@@ -528,7 +547,6 @@ def main():
                                 if not client_df.empty:
                                     c_match = client_df[client_df["Client Name"] == sel_client]
                                     if not c_match.empty: c_det = c_match.iloc[0].to_dict()
-                                
                                 d_list = []
                                 for _, r in client_devs.iterrows():
                                     d_list.append({"sn": r['S/N'], "product": r.get('Product Name'), "model": r.get('Model', '-'), "renewal": r.get('Renewal Date')})
@@ -557,21 +575,15 @@ def main():
                                 st.success(f"Updated {cnt} devices!"); st.rerun()
         else: st.info("No product data available.")
 
-    # 5. INSTALLATION LIST (FIXED)
     elif menu == "Installation List":
         st.subheader("🔎 Installation Repository")
         search = st.text_input("Search")
-        if search:
-            mask = prod_df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)
-            st.dataframe(prod_df[mask], use_container_width=True)
-        else:
-            st.dataframe(prod_df, use_container_width=True)
+        if search: st.dataframe(prod_df[prod_df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)], use_container_width=True)
+        else: st.dataframe(prod_df, use_container_width=True)
 
-    # 6. CLIENT MASTER (FIXED)
     elif menu == "Client Master":
         st.subheader("👥 Client Master")
         st.dataframe(client_df, use_container_width=True)
-        # Edit logic kept simple for stability
         clients = get_clean_list(client_df, "Client Name")
         if clients:
             with st.expander("Edit Client Details"):
@@ -586,7 +598,7 @@ def main():
                         if update_client_details(c_edit, {"Client Name": nm, "Email": em, "Phone Number": ph, "Address": ad}):
                             st.success("Updated!"); st.rerun()
 
-    # 7. PARTNER ANALYTICS (UPGRADED)
+    # --- UPDATED CHANNEL PARTNER ANALYTICS ---
     elif menu == "Channel Partner Analytics":
         st.subheader("🤝 Partner Performance")
         if not prod_df.empty and "Channel Partner" in prod_df.columns:
