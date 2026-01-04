@@ -393,19 +393,104 @@ def main():
 
     elif menu == "New Dispatch Entry":
         st.subheader("📝 New Dispatch")
-        with st.form("dispatch_form"):
-            c1, c2 = st.columns(2)
-            sn = c1.text_input("S/N (Required)")
-            prod = c1.selectbox("Product", BASE_PRODUCT_LIST)
-            client = c2.text_input("Client Name")
-            install_d = c2.date_input("Installation Date")
-            if st.form_submit_button("Save Dispatch"):
-                if not sn or not client: st.error("Missing Data")
+        # --- FIXED DISPATCH FORM LOGIC ---
+        
+        # 1. Device Info
+        st.markdown("### 🛠️ Device & Network")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            sn = st.text_input("Product S/N (Required)")
+            oem = st.text_input("OEM S/N")
+        with c2:
+            prod = st.selectbox("Product Name", BASE_PRODUCT_LIST)
+            model = st.text_input("Model")
+        with c3:
+            conn = st.selectbox("Connectivity", ["4G", "2G", "NB-IoT", "WiFi", "LoRaWAN"])
+            cable = st.text_input("Cable Length")
+        with c4:
+            uid = st.text_input("Device UID")
+            # SIM Logic
+            avail_sims = get_clean_list(sim_df[sim_df["Status"] == "Available"], "SIM Number")
+            sim_opts = ["None"] + avail_sims + ["➕ Add New SIM..."]
+            sim_sel = st.selectbox("SIM Card", sim_opts)
+
+        final_sim_num = ""
+        final_sim_prov = "VI"
+        
+        if sim_sel == "➕ Add New SIM...":
+            c_s1, c_s2 = st.columns(2)
+            with c_s1: final_sim_num = st.text_input("Enter New SIM Number")
+            with c_s2: final_sim_prov = st.selectbox("Provider", ["VI", "AIRTEL", "JIO", "BSNL", "Other"])
+        elif sim_sel != "None":
+            final_sim_num = sim_sel
+            if not sim_df.empty:
+                match = sim_df[sim_df["SIM Number"] == final_sim_num]
+                if not match.empty: final_sim_prov = match.iloc[0]["Provider"]
+
+        st.divider()
+
+        # 2. Client & Partner
+        st.markdown("### 👥 Client & Partner")
+        col_p, col_c, col_i, col_d = st.columns(4)
+
+        with col_p:
+            avail_partners = get_clean_list(prod_df, "Channel Partner")
+            partner_opts = ["Select..."] + avail_partners + ["➕ Create New..."]
+            p_sel = st.selectbox("Channel Partner", partner_opts)
+            final_partner = st.text_input("Enter Partner Name", placeholder="Type name...") if p_sel == "➕ Create New..." else (p_sel if p_sel != "Select..." else "")
+
+        with col_c:
+            avail_clients = get_clean_list(client_df, "Client Name")
+            client_opts = ["Select..."] + avail_clients + ["➕ Create New..."]
+            c_sel = st.selectbox("End User (Client)", client_opts)
+            final_client = st.text_input("Enter Client Name", placeholder="Type name...") if c_sel == "➕ Create New..." else (c_sel if c_sel != "Select..." else "")
+
+        with col_i:
+            avail_inds = get_clean_list(prod_df, "Industry Category")
+            ind_opts = ["Select..."] + avail_inds + ["➕ Create New..."]
+            i_sel = st.selectbox("Industry", ind_opts)
+            final_ind = st.text_input("Enter Industry", placeholder="Type category...") if i_sel == "➕ Create New..." else (i_sel if i_sel != "Select..." else "")
+
+        with col_d:
+            install_d = st.date_input("Installation Date")
+            valid = st.number_input("Validity (Months)", 1, 60, 12)
+            activ_d = st.date_input("Activation Date")
+
+        st.markdown("---")
+        
+        if st.button("💾 Save Dispatch Entry", type="primary", use_container_width=True):
+            missing_fields = []
+            if not sn: missing_fields.append("S/N")
+            if not final_client: missing_fields.append("Client")
+            
+            if missing_fields:
+                st.error(f"Missing required fields: {', '.join(missing_fields)}")
+            else:
+                sn_list = prod_df["S/N"].values if "S/N" in prod_df.columns else []
+                if sn in sn_list:
+                    st.error("S/N already exists!")
                 else:
-                    new_prod = {"S/N": sn, "Product Name": prod, "End User": client, "Installation Date": str(install_d), "Renewal Date": str(calculate_renewal(install_d, 12))}
+                    renew_date = calculate_renewal(activ_d, valid)
+                    new_prod = {
+                        "S/N": sn, "OEM S/N": oem, "Product Name": prod, "Model": model,
+                        "Connectivity (2G/4G)": conn, "Cable Length": cable,
+                        "Installation Date": str(install_d), "Activation Date": str(activ_d), 
+                        "Validity (Months)": valid, "Renewal Date": str(renew_date), 
+                        "Device UID": uid, "SIM Number": final_sim_num, "SIM Provider": final_sim_prov,
+                        "Channel Partner": final_partner, "End User": final_client, "Industry Category": final_ind
+                    }
+                    
                     if append_to_sheet("Products", new_prod):
-                        append_to_sheet("Clients", {"Client Name": client})
-                        st.success("Saved!"); st.rerun()
+                        if c_sel == "➕ Create New..." and final_client:
+                             append_to_sheet("Clients", {"Client Name": final_client})
+                        
+                        if final_sim_num:
+                            sim_db_list = sim_df["SIM Number"].values if "SIM Number" in sim_df.columns else []
+                            if final_sim_num in sim_db_list: 
+                                update_sim_status(final_sim_num, "Used", sn)
+                            else: 
+                                append_to_sheet("Sims", {"SIM Number": final_sim_num, "Provider": final_sim_prov, "Status": "Used", "Used In S/N": sn, "Entry Date": str(date.today())})
+                        st.success("✅ Dispatch Saved Successfully!"); st.balloons(); st.rerun()
 
     # --- RESTRUCTURED SUBSCRIPTION MANAGER ---
     elif menu == "Subscription Manager":
@@ -426,7 +511,6 @@ def main():
                 # --- TAB 1: INDIVIDUAL ---
                 with tab_single:
                     st.markdown("##### Manage Specific Device")
-                    # List format: "S/N | Client | Status"
                     exp_df['Label'] = exp_df['S/N'] + " | " + exp_df['End User'] + " (" + exp_df['Status_Calc'] + ")"
                     selected_label = st.selectbox("Select Device", exp_df['Label'].tolist())
                     
@@ -446,11 +530,10 @@ def main():
                             s_valid = sq2.date_input("Valid Until", date.today() + relativedelta(days=15))
                             if st.form_submit_button("Generate & Preview"):
                                 device_list = [{"sn": selected_sn, "product": row.get('Product Name'), "model": row.get('Model', '-'), "renewal": row.get('Renewal Date')}]
-                                # KEY FIXED HERE
                                 st.session_state['single_quote_data'] = {"client": row.get('End User'), "devices": device_list, "rate": s_rate, "valid": s_valid}
                                 st.success("Quote Ready! See Email section.")
 
-                    # 2. Email
+                    # 2. Email (With Edit Capability)
                     if 'single_quote_data' in st.session_state:
                         with st.expander("📧 Email Quote", expanded=True):
                             sq_data = st.session_state['single_quote_data']
@@ -461,10 +544,13 @@ def main():
                                 if not match.empty: client_email = match.iloc[0].get("Email", "")
                             
                             se_to = st.text_input("To Email", value=client_email, key="se_to")
+                            se_sub = st.text_input("Subject", value=f"Renewal Quote - {selected_sn}", key="se_sub")
+                            se_body = st.text_area("Message Body", value=f"Dear {client_name},\n\nPlease find attached the renewal quotation for device {selected_sn}.\n\nRegards,\nOrcatech Enterprises", key="se_body", height=150)
+                            
                             if st.button("Send Email", key="se_btn"):
                                 with st.spinner("Sending..."):
                                     pdf = create_quotation_pdf(client_name, sq_data['devices'], sq_data['rate'], sq_data['valid'])
-                                    if send_email_with_attachment(se_to, f"Renewal Quote - {selected_sn}", "Please find quote attached.", pdf, f"Quote_{selected_sn}.pdf"):
+                                    if send_email_with_attachment(se_to, se_sub, se_body, pdf, f"Quote_{selected_sn}.pdf"):
                                         st.success("Sent!")
                                         del st.session_state['single_quote_data']
 
@@ -499,11 +585,10 @@ def main():
                                 d_list = []
                                 for _, r in client_devs.iterrows():
                                     d_list.append({"sn": r['S/N'], "product": r.get('Product Name'), "model": r.get('Model', '-'), "renewal": r.get('Renewal Date')})
-                                # KEY FIXED HERE
                                 st.session_state['bulk_quote_data'] = {"client": sel_client, "devices": d_list, "rate": b_rate, "valid": b_valid}
                                 st.success(f"Quote generated for {len(d_list)} devices.")
 
-                    # 2. Email
+                    # 2. Email (With Edit Capability)
                     if 'bulk_quote_data' in st.session_state:
                         with st.expander("📧 Email Bulk Quote", expanded=True):
                             bq_data = st.session_state['bulk_quote_data']
@@ -513,10 +598,13 @@ def main():
                                 if not m.empty: c_mail = m.iloc[0].get("Email", "")
                             
                             be_to = st.text_input("To Email", value=c_mail, key="be_to")
+                            be_sub = st.text_input("Subject", value=f"Bulk Renewal Quote - {sel_client}", key="be_sub")
+                            be_body = st.text_area("Message Body", value=f"Dear {sel_client},\n\nPlease find attached the bulk renewal quotation for your {len(bq_data['devices'])} devices.\n\nRegards,\nOrcatech Enterprises", key="be_body", height=150)
+                            
                             if st.button("Send Bulk Email", key="be_btn"):
                                 with st.spinner("Sending..."):
                                     pdf = create_quotation_pdf(sel_client, bq_data['devices'], bq_data['rate'], bq_data['valid'])
-                                    if send_email_with_attachment(be_to, f"Bulk Renewal Quote - {sel_client}", f"Please find attached the renewal quote for {len(bq_data['devices'])} devices.", pdf, f"Quote_{sel_client}.pdf"):
+                                    if send_email_with_attachment(be_to, be_sub, be_body, pdf, f"Quote_{sel_client}.pdf"):
                                         st.success("Sent!")
                                         del st.session_state['bulk_quote_data']
 
