@@ -133,22 +133,17 @@ def update_sim_status(sim_number, new_status, used_in_sn):
     except Exception as e:
         st.warning(f"Could not update SIM status: {e}")
 
-# --- NEW: UPDATE SUBSCRIPTION HELPER ---
 def update_product_subscription(sn, new_activ, new_val, new_renew):
-    """Finds a product by S/N and updates subscription dates."""
     ws = get_worksheet(SHEET_NAME, "Products")
     if not ws: return False
     try:
         cell = ws.find(sn)
         if cell:
             headers = ws.row_values(1)
-            # Safe index finding
             try:
                 activ_col = headers.index("Activation Date") + 1
                 valid_col = headers.index("Validity (Months)") + 1
                 renew_col = headers.index("Renewal Date") + 1
-                
-                # Update cells
                 ws.update_cell(cell.row, activ_col, str(new_activ))
                 ws.update_cell(cell.row, valid_col, str(new_val))
                 ws.update_cell(cell.row, renew_col, str(new_renew))
@@ -261,7 +256,6 @@ def main():
     st.sidebar.caption(f"👥 Clients: {len(client_df)}")
     st.sidebar.caption(f"📶 SIMs: {len(sim_df)}")
 
-    # ADDED "Subscription Manager" to Menu
     menu = st.sidebar.radio("Go to:", 
         ["Dashboard", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "IMPORT/EXPORT DB"])
 
@@ -406,63 +400,55 @@ def main():
                         else: append_to_sheet("Sims", {"SIM Number": final_sim_num, "Provider": final_sim_prov, "Status": "Used", "Used In S/N": sn, "Entry Date": str(date.today())})
                     st.success("✅ Dispatch Saved Successfully!"); st.balloons(); st.rerun()
 
-    # --- 4. SUBSCRIPTION MANAGER (NEW FEATURE) ---
+    # 4. SUBSCRIPTION MANAGER
     elif menu == "Subscription Manager":
         st.subheader("🔄 Subscription Renewal Manager")
-        
-        # Prepare data
         if not prod_df.empty and "Renewal Date" in prod_df.columns:
             prod_df['Status_Calc'] = prod_df['Renewal Date'].apply(check_expiry_status)
-            
-            # Filter only expired or expiring soon
             renew_candidates = prod_df[prod_df['Status_Calc'].isin(["Expiring Soon", "Expired"])].copy()
-            
             if renew_candidates.empty:
                 st.success("✅ Good news! No devices need renewal at this time.")
-                st.info("Only devices marked as 'Expired' or 'Expiring Soon' appear here.")
             else:
-                # Create a readable label for dropdown
                 renew_candidates['Label'] = renew_candidates['S/N'] + " | " + renew_candidates['End User'] + " (" + renew_candidates['Status_Calc'] + ")"
-                
                 selected_label = st.selectbox("Select Device to Renew", renew_candidates['Label'].tolist())
-                
-                # Get selected row details
                 selected_sn = selected_label.split(" | ")[0]
                 row = renew_candidates[renew_candidates['S/N'] == selected_sn].iloc[0]
-                
                 st.divider()
                 st.markdown(f"**Current Status:** :red[{row['Status_Calc']}]")
-                
                 c_info1, c_info2, c_info3 = st.columns(3)
                 c_info1.info(f"**Product:** {row.get('Product Name', 'N/A')}")
                 c_info2.info(f"**Current Expiry:** {row.get('Renewal Date', 'N/A')}")
                 c_info3.info(f"**Client:** {row.get('End User', 'N/A')}")
-                
                 st.markdown("### 📅 Update Subscription")
                 with st.form("renew_form"):
                     c_new1, c_new2 = st.columns(2)
                     new_install_d = c_new1.date_input("New Activation/Start Date", date.today())
                     new_validity = c_new2.number_input("Add Validity (Months)", min_value=1, value=12, step=1)
-                    
-                    # Calculate preview
                     new_end_date = calculate_renewal(new_install_d, new_validity)
                     st.write(f"**New Expiry Date will be:** :green[{new_end_date}]")
-                    
                     if st.form_submit_button("✅ Confirm Renewal"):
                         if update_product_subscription(selected_sn, str(new_install_d), new_validity, str(new_end_date)):
-                            st.success(f"Subscription for {selected_sn} updated successfully!")
-                            st.balloons()
-                            st.rerun()
-                        else:
-                            st.error("Failed to update Google Sheet. Check connections.")
-        else:
-            st.info("No product data available.")
+                            st.success(f"Subscription for {selected_sn} updated successfully!"); st.balloons(); st.rerun()
+                        else: st.error("Failed to update Google Sheet.")
+        else: st.info("No product data available.")
 
+    # 5. INSTALLATION LIST (SEARCH ADDED)
     elif menu == "Installation List":
-        st.dataframe(prod_df, use_container_width=True)
+        st.subheader("🔎 Installation Repository")
+        search_term = st.text_input("🔍 Search Database", placeholder="Type S/N, Client, or UID...")
+        if search_term:
+            mask = prod_df.astype(str).apply(lambda x: x.str.contains(search_term, case=False)).any(axis=1)
+            display_df = prod_df[mask]
+            st.info(f"Found {len(display_df)} records matching '{search_term}'")
+        else:
+            display_df = prod_df
+        st.dataframe(display_df, use_container_width=True)
+
+    # 6. CLIENT MASTER
     elif menu == "Client Master":
         st.dataframe(client_df, use_container_width=True)
     
+    # 7. PARTNER ANALYTICS
     elif menu == "Channel Partner Analytics":
         st.subheader("🤝 Channel Partner Performance")
         if not prod_df.empty and "Channel Partner" in prod_df.columns:
@@ -479,6 +465,7 @@ def main():
             else: st.info("No Channel Partner data.")
         else: st.info("No Data.")
 
+    # 8. IMPORT/EXPORT
     elif menu == "IMPORT/EXPORT DB":
         st.subheader("💾 Database Management")
         tab1, tab2 = st.tabs(["⬇️ Backup / Export", "⬆️ Bulk Import"])
