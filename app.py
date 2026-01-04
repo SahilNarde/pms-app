@@ -235,7 +235,6 @@ def bulk_append_to_sheet(tab_name, df):
             if h_clean not in df.columns: df[h_clean] = ""
             
         clean_headers = [h.strip() for h in sheet_headers]
-        # Align columns correctly
         df_sorted = df[clean_headers]
         
         data_to_upload = df_sorted.astype(str).values.tolist()
@@ -298,12 +297,7 @@ def check_expiry_status(renewal_date):
         return "Expired" if days < 0 else ("Expiring Soon" if days <= 30 else "Active")
     except: return "Unknown"
 
-# --- FIXED EXPORT FUNCTION ---
 def convert_all_to_excel(dfs_dict):
-    """
-    Exports multiple DataFrames to a single Excel file with multiple sheets.
-    dfs_dict: {"SheetName": dataframe, ...}
-    """
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         for sheet_name, df in dfs_dict.items():
@@ -328,6 +322,10 @@ def main():
     if not st.session_state.logged_in:
         c1, c2, c3 = st.columns([1, 1, 1])
         with c2:
+            # --- LOGO ON LOGIN ---
+            if os.path.exists(LOGO_FILENAME):
+                st.image(LOGO_FILENAME, use_container_width=True)
+            
             st.markdown("## 🔒 System Login")
             with st.form("login_form"):
                 user = st.text_input("Username")
@@ -342,6 +340,11 @@ def main():
         return
 
     with st.sidebar:
+        # --- LOGO ON SIDEBAR ---
+        if os.path.exists(LOGO_FILENAME):
+            st.image(LOGO_FILENAME, use_container_width=True)
+            st.markdown("---")
+            
         st.info(f"👤 User: **{st.session_state.user_name}**")
         if st.button("🔄 Refresh Data"): load_data.clear(); st.rerun()
         if st.button("🚪 Logout"): st.session_state.logged_in = False; st.rerun()
@@ -425,7 +428,6 @@ def main():
 
     elif menu == "New Dispatch Entry":
         st.subheader("📝 New Dispatch")
-        # FIXED: DROPDOWNS RESTORED
         st.markdown("### 🛠️ Device & Network")
         c1, c2, c3, c4 = st.columns(4)
         with c1:
@@ -533,7 +535,7 @@ def main():
                     if 'sq_data' in st.session_state:
                         with st.expander("📧 Email Quote", expanded=True):
                             sq = st.session_state['sq_data']
-                            se_to = st.text_input("To", value=sq['client'].get('Email', ''), key="se_to")
+                            se_to = st.text_input("To Email", value=sq['client'].get('Email', ''), key="se_to")
                             se_sub = st.text_input("Subject", value=f"Renewal Quote - {selected_sn}", key="se_sub")
                             se_body = st.text_area("Message", value=f"Dear {sq['client'].get('Client Name', 'Client')},\n\nPlease find the renewal quote attached.\n\nRegards,\nOrcatech", height=100, key="se_body")
                             
@@ -576,7 +578,7 @@ def main():
                     if 'bq_data' in st.session_state:
                         with st.expander("📧 Email Bulk Quote", expanded=True):
                             bq = st.session_state['bq_data']
-                            be_to = st.text_input("To", value=bq['client'].get('Email', ''), key="be_to")
+                            be_to = st.text_input("To Email", value=bq['client'].get('Email', ''), key="be_to")
                             be_sub = st.text_input("Subject", value=f"Bulk Renewal Quote - {sel_client}", key="be_sub")
                             be_body = st.text_area("Message", value=f"Dear {sel_client},\n\nPlease find the bulk renewal quote attached.\n\nRegards,\nOrcatech", height=100, key="be_body")
                             
@@ -621,7 +623,6 @@ def main():
                         if update_client_details(c_edit, {"Client Name": nm, "Email": em, "Phone Number": ph, "Address": ad}):
                             st.success("Updated!"); st.rerun()
 
-    # --- CHANNEL PARTNER ANALYTICS (FIXED BAR CHART) ---
     elif menu == "Channel Partner Analytics":
         st.subheader("🤝 Partner Performance")
         if not prod_df.empty and "Channel Partner" in prod_df.columns:
@@ -632,9 +633,7 @@ def main():
             with c1:
                 st.markdown("#### 🏆 Leaderboard")
                 st.dataframe(partner_counts, use_container_width=True, hide_index=True)
-            
             with c2:
-                # REPLACED STACKED CHART WITH SIMPLE TOTAL INSTALLATIONS CHART
                 st.markdown("#### 📊 Installation Volume")
                 fig = px.bar(partner_counts, x="Partner Name", y="Total Installations", 
                              title="Total Installations by Partner",
