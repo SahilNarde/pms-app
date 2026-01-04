@@ -8,6 +8,8 @@ from google.oauth2.service_account import Credentials
 import io
 import os
 import smtplib
+import base64
+from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
@@ -60,6 +62,25 @@ def get_worksheet(sheet_name, tab_name):
         return sh.worksheet(tab_name)
     except Exception as e:
         return None
+
+# --- UI HELPER FUNCTIONS (NEW) ---
+def img_to_bytes(img_path):
+    img_bytes = Path(img_path).read_bytes()
+    encoded = base64.b64encode(img_bytes).decode()
+    return encoded
+
+def render_centered_logo(img_path, width_px):
+    """Renders an image centered using HTML/CSS for better control."""
+    if os.path.exists(img_path):
+        img_base64 = img_to_bytes(img_path)
+        st.markdown(
+            f"""
+            <div style="display: flex; justify-content: center; margin-bottom: 20px;">
+                <img src="data:image/png;base64,{img_base64}" alt="Logo" width="{width_px}">
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
 # --- PDF GENERATOR ---
 def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until):
@@ -322,9 +343,9 @@ def main():
     if not st.session_state.logged_in:
         c1, c2, c3 = st.columns([1, 1, 1])
         with c2:
-            # FIXED: Reduced Logo size for Login Page
-            if os.path.exists(LOGO_FILENAME):
-                st.image(LOGO_FILENAME, width=200) # Smaller fixed width
+            # --- LOGO ON LOGIN (FIXED: CENTERED & CLEARER) ---
+            # Using HTML/CSS for perfect centering. Increased width to 250px for clarity.
+            render_centered_logo(LOGO_FILENAME, 250)
             
             st.markdown("## 🔒 System Login")
             with st.form("login_form"):
@@ -340,10 +361,10 @@ def main():
         return
 
     with st.sidebar:
-        # FIXED: Reduced Logo size for Sidebar
-        if os.path.exists(LOGO_FILENAME):
-            st.image(LOGO_FILENAME, width=120) # Smaller fixed width
-            st.markdown("---")
+        # --- LOGO ON SIDEBAR (FIXED: CENTERED) ---
+        # Using HTML/CSS for perfect centering. Kept small (120px).
+        render_centered_logo(LOGO_FILENAME, 120)
+        st.markdown("---")
             
         st.info(f"👤 User: **{st.session_state.user_name}**")
         if st.button("🔄 Refresh Data"): load_data.clear(); st.rerun()
