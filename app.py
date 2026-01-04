@@ -254,13 +254,17 @@ def main():
             c4.metric("Expired", len(prod_df[prod_df['Status_Calc'] == "Expired"]))
             st.divider()
             
+            # --- GRAPHS ---
             col_g1, col_g2 = st.columns(2)
             with col_g1:
                 # --- PIE CHART FIX ---
                 if "Industry Category" in prod_df.columns:
                     # STRICT CLEANING: Remove 'nan', 'None', and whitespace
                     clean_ind_df = prod_df.copy()
-                    clean_ind_df = clean_ind_df[~clean_ind_df['Industry Category'].isin(['nan', 'None', '', ' '])]
+                    # Convert to string and strip
+                    clean_ind_df["Industry Category"] = clean_ind_df["Industry Category"].astype(str).str.strip()
+                    # Filter out garbage
+                    clean_ind_df = clean_ind_df[~clean_ind_df['Industry Category'].isin(['nan', 'None', '', ' ', 'NaN', 'NULL'])]
                     
                     if not clean_ind_df.empty:
                         ind_counts = clean_ind_df['Industry Category'].value_counts().reset_index()
@@ -284,10 +288,24 @@ def main():
                     else:
                         st.info("No Installation Dates available for chart.")
 
-            expiring = prod_df[prod_df['Status_Calc'].isin(["Expiring Soon", "Expired"])]
-            if not expiring.empty:
-                st.warning("⚠️ Expiring / Expired Devices")
-                st.dataframe(expiring[["S/N", "End User", "Renewal Date", "Status_Calc"]], use_container_width=True)
+            # --- ALERT CENTER (TABS RESTORED) ---
+            st.markdown("### ⚠️ Alert Center")
+            tab_soon, tab_expired = st.tabs(["⏳ Expiring Soon", "❌ Expired"])
+            
+            with tab_soon:
+                df_soon = prod_df[prod_df['Status_Calc'] == "Expiring Soon"]
+                if not df_soon.empty:
+                    st.dataframe(df_soon[["S/N", "End User", "Renewal Date", "Status_Calc"]], use_container_width=True)
+                else:
+                    st.success("No subscriptions expiring soon.")
+                    
+            with tab_expired:
+                df_expired = prod_df[prod_df['Status_Calc'] == "Expired"]
+                if not df_expired.empty:
+                    st.dataframe(df_expired[["S/N", "End User", "Renewal Date", "Status_Calc"]], use_container_width=True)
+                else:
+                    st.success("No expired subscriptions.")
+
         else:
             st.info("Database empty. Add entries.")
 
