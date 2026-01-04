@@ -28,7 +28,7 @@ LOGO_FILENAME = "FINAL LOGO.png"
 COMPANY_INFO = {
     "name": "Orcatech Enterprises",
     "address": "Flat No. 102, Mayureshwar Heights, S.No. 24/4,\nJadhavrao Industrial Estate, Nanded City,\nSinhagad Road, Pune 411041",
-    "contact": "sahil@orcatech.co.in | Mobile: 7387805131",
+    "contact": "sales@orcatech.co.in | Mobile: 9325665554",
     "gst": "27AWIPN2502N1ZB",
     "bank_name": "Bank of Maharashtra",
     "acc_name": "ORCATECH ENTERPRISES",
@@ -528,3 +528,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
