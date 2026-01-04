@@ -278,11 +278,6 @@ def main():
             c4.metric("Expired", len(prod_df[prod_df['Status_Calc'] == "Expired"]))
             st.divider()
             
-            # --- DEBUGGER (Optional: Check what columns are actually loaded) ---
-            with st.expander("🛠️ View Raw Data (Debug)"):
-                st.write("Loaded Columns:", prod_df.columns.tolist())
-                st.dataframe(prod_df.head(), use_container_width=True)
-
             # --- GRAPHS ---
             col_g1, col_g2 = st.columns(2)
             with col_g1:
