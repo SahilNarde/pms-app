@@ -18,6 +18,7 @@ from reportlab.lib import colors
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 
 # --- CONFIGURATION ---
 SHEET_NAME = "PMS DB"
@@ -69,7 +70,6 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     styles = getSampleStyleSheet()
 
     # 1. Header & Logo
-    # Create a table for the header (Logo Left, Company Info Right)
     logo = []
     if os.path.exists(LOGO_FILENAME):
         img = Image(LOGO_FILENAME, width=2*inch, height=1*inch)
@@ -101,7 +101,6 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     elements.append(Spacer(1, 0.2*inch))
 
     # 3. Items Table
-    # Headers
     data = [['S/N', 'Product / Model', 'Description', 'Amount (INR)']]
     
     subtotal = 0
@@ -121,7 +120,7 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     sgst = subtotal * 0.09
     total = subtotal + cgst + sgst
 
-    # Add Totals to Table
+    # Add Totals
     data.append(['', '', 'Subtotal', f"{subtotal:,.2f}"])
     data.append(['', '', 'CGST (9%)', f"{cgst:,.2f}"])
     data.append(['', '', 'SGST (9%)', f"{sgst:,.2f}"])
@@ -135,9 +134,9 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('GRID', (0, 0), (-1, -5), 1, colors.black), # Grid for items
-        ('LINEBELOW', (0, -4), (-1, -1), 1, colors.grey), # Lines for totals
-        ('FONTNAME', (-2, -1), (-1, -1), 'Helvetica-Bold'), # Bold Grand Total
+        ('GRID', (0, 0), (-1, -5), 1, colors.black), 
+        ('LINEBELOW', (0, -4), (-1, -1), 1, colors.grey), 
+        ('FONTNAME', (-2, -1), (-1, -1), 'Helvetica-Bold'),
         ('BACKGROUND', (-2, -1), (-1, -1), colors.whitesmoke),
     ]))
     elements.append(table)
@@ -150,9 +149,19 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     Account No: {COMPANY_INFO['acc_no']}<br/>
     IFSC Code: {COMPANY_INFO['ifsc']}<br/>
     Branch: {COMPANY_INFO['branch']}"""
-    
-    # Draw Bank info in a box
     elements.append(Paragraph(bank_info, styles['Normal']))
+    
+    # 5. Professional Footer (Updated)
+    elements.append(Spacer(1, 0.5*inch))
+    footer_style = ParagraphStyle(
+        'Footer', 
+        parent=styles['Italic'], 
+        fontSize=9, 
+        textColor=colors.darkgrey, 
+        alignment=TA_CENTER
+    )
+    footer_text = "This is a computer-generated document and does not require a physical signature."
+    elements.append(Paragraph(footer_text, footer_style))
     
     doc.build(elements)
     buffer.seek(0)
@@ -332,10 +341,18 @@ def main():
         prod_df = load_data("Products")
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
+        
+        # Ensure safe DataFrames
+        if "S/N" not in prod_df.columns: prod_df = pd.DataFrame(columns=["S/N", "End User", "Renewal Date", "Industry Category", "Installation Date", "Activation Date", "Validity (Months)", "Channel Partner"])
+        if "Client Name" not in client_df.columns: client_df = pd.DataFrame(columns=["Client Name", "Email"])
+        if "SIM Number" not in sim_df.columns: sim_df = pd.DataFrame(columns=["SIM Number", "Status", "Provider"])
     except: st.error("DB Error"); return
 
     st.sidebar.caption(f"📦 Products: {len(prod_df)}")
     st.sidebar.caption(f"👥 Clients: {len(client_df)}")
+
+    # CONSTANTS
+    BASE_PRODUCT_LIST = ["DWLR", "FM", "OCFM", "ARG", "LM", "LC", "Custom"]
 
     menu = st.sidebar.radio("Go to:", ["Dashboard", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "IMPORT/EXPORT DB"])
 
@@ -349,8 +366,6 @@ def main():
             c3.metric("Expiring", len(prod_df[prod_df['Status_Calc'] == "Expiring Soon"]))
             c4.metric("Expired", len(prod_df[prod_df['Status_Calc'] == "Expired"]))
             st.divider()
-            
-            # --- GRAPHS ---
             col_g1, col_g2 = st.columns(2)
             with col_g1:
                 if "Industry Category" in prod_df.columns:
@@ -367,8 +382,6 @@ def main():
                         trend = df_trend.groupby(df_trend["Installation Date"].dt.to_period("M")).size().reset_index(name="Count")
                         trend["Month"] = trend["Installation Date"].astype(str)
                         st.plotly_chart(px.area(trend, x="Month", y="Count", title="Monthly Installations", markers=True), use_container_width=True)
-
-            # Alerts
             st.markdown("### ⚠️ Alert Center")
             t1, t2 = st.tabs(["⏳ Expiring Soon", "❌ Expired"])
             with t1: st.dataframe(prod_df[prod_df['Status_Calc']=="Expiring Soon"], use_container_width=True)
@@ -400,65 +413,38 @@ def main():
                         append_to_sheet("Clients", {"Client Name": client})
                         st.success("Saved!"); st.rerun()
 
-    # --- UPDATED SUBSCRIPTION & QUOTATION MANAGER ---
+    # --- UPDATED SUBSCRIPTION MANAGER ---
     elif menu == "Subscription Manager":
         st.subheader("🔄 Subscription & Quotation Manager")
-        
         if not prod_df.empty:
             prod_df['Status_Calc'] = prod_df['Renewal Date'].apply(check_expiry_status)
-            
-            # Filter Expiring/Expired Data
             exp_df = prod_df[prod_df['Status_Calc'].isin(["Expiring Soon", "Expired"])].copy()
-            
             if exp_df.empty:
                 st.success("✅ No devices need renewal.")
             else:
-                # 1. Select Client
                 clients_with_expiry = get_clean_list(exp_df, "End User")
                 selected_client = st.selectbox("Select Client (Company)", clients_with_expiry)
-                
-                # 2. Get Devices for Client
                 client_devices = exp_df[exp_df["End User"] == selected_client]
                 st.info(f"Found {len(client_devices)} expiring devices for **{selected_client}**")
                 st.dataframe(client_devices[["S/N", "Product Name", "Model", "Renewal Date", "Status_Calc"]], use_container_width=True)
                 
                 st.divider()
-                
-                # 3. Quotation Generator
                 st.markdown("### 📄 Create Quotation")
                 with st.form("quote_gen_form"):
                     c_q1, c_q2 = st.columns(2)
                     rate_per_device = c_q1.number_input("Subscription Rate Per Device (INR)", min_value=0.0, value=2500.0, step=100.0)
                     valid_until = c_q2.date_input("Quotation Valid Until", value=date.today() + relativedelta(days=15))
-                    
                     if st.form_submit_button("📜 Generate Quotation & Preview"):
-                        # Prepare data for PDF
                         device_list = []
                         for _, row in client_devices.iterrows():
-                            device_list.append({
-                                "sn": row['S/N'],
-                                "product": row.get('Product Name', 'Device'),
-                                "model": row.get('Model', ''),
-                                "renewal": row.get('Renewal Date', '')
-                            })
-                        
-                        st.session_state['quote_data'] = {
-                            "client": selected_client,
-                            "devices": device_list,
-                            "rate": rate_per_device,
-                            "valid": valid_until
-                        }
+                            device_list.append({"sn": row['S/N'], "product": row.get('Product Name', 'Device'), "model": row.get('Model', ''), "renewal": row.get('Renewal Date', '')})
+                        st.session_state['quote_data'] = {"client": selected_client, "devices": device_list, "rate": rate_per_device, "valid": valid_until}
                         st.success("Quotation Generated! Review below.")
 
-                # 4. Review & Send
                 if 'quote_data' in st.session_state:
                     q = st.session_state['quote_data']
-                    total_amt = q['rate'] * len(q['devices']) * 1.18 # Rough calc for preview
-                    
                     st.markdown("#### 📧 Email to Client")
                     c_e1, c_e2 = st.columns(2)
-                    
-                    # Try fetch email
                     client_email = ""
                     if not client_df.empty:
                         match = client_df[client_df["Client Name"] == selected_client]
@@ -476,7 +462,7 @@ def main():
                                 pdf_buffer = create_quotation_pdf(q['client'], q['devices'], q['rate'], q['valid'])
                                 if send_email_with_attachment(email_to, email_sub, email_body, pdf_buffer, f"Quote_{selected_client}.pdf"):
                                     st.success(f"Quotation sent successfully to {email_to}!")
-                                    del st.session_state['quote_data'] # Reset
+                                    del st.session_state['quote_data']
 
                 st.divider()
                 st.markdown("### 📅 Bulk Renewal (After Payment)")
@@ -488,10 +474,8 @@ def main():
                             new_end = calculate_renewal(new_start, months)
                             success_count = 0
                             for sn in client_devices['S/N'].tolist():
-                                if update_product_subscription(sn, str(new_start), months, str(new_end)):
-                                    success_count += 1
-                            st.success(f"Updated {success_count} devices successfully!")
-                            st.rerun()
+                                if update_product_subscription(sn, str(new_start), months, str(new_end)): success_count += 1
+                            st.success(f"Updated {success_count} devices successfully!"); st.rerun()
 
     elif menu == "Installation List":
         st.subheader("🔎 Installation Repository")
@@ -528,4 +512,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
