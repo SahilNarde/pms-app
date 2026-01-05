@@ -539,14 +539,27 @@ def main():
             st.markdown("### 👥 Client & Partner")
             col_p, col_c, col_i, col_d = st.columns(4)
             
+            # FIXED: Explicit if/else to ensure widget rendering
             p_sel = col_p.selectbox("Partner", ["Select..."] + get_clean_list(prod_df, "Channel Partner") + ["➕ Create..."])
-            partner = col_p.text_input("New Partner Name") if p_sel == "➕ Create..." else (p_sel if p_sel != "Select..." else "")
+            partner = p_sel
+            if p_sel == "➕ Create...":
+                partner = col_p.text_input("New Partner Name")
+            elif p_sel == "Select...":
+                partner = ""
 
             c_sel = col_c.selectbox("Client", ["Select..."] + get_clean_list(client_df, "Client Name") + ["➕ Create..."])
-            client = col_c.text_input("New Client Name") if c_sel == "➕ Create..." else (c_sel if c_sel != "Select..." else "")
+            client = c_sel
+            if c_sel == "➕ Create...":
+                client = col_c.text_input("New Client Name")
+            elif c_sel == "Select...":
+                client = ""
 
             i_sel = col_i.selectbox("Industry", ["Select..."] + get_clean_list(prod_df, "Industry Category") + ["➕ Create..."])
-            industry = col_i.text_input("New Industry") if i_sel == "➕ Create..." else (i_sel if i_sel != "Select..." else "")
+            industry = i_sel
+            if i_sel == "➕ Create...":
+                industry = col_i.text_input("New Industry")
+            elif i_sel == "Select...":
+                industry = ""
 
             install_d = col_d.date_input("Installation Date")
             valid = col_d.number_input("Validity", 1, 60, 12)
