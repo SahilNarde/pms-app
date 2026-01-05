@@ -14,7 +14,7 @@ from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
-from zoneinfo import ZoneInfo  # --- NEW IMPORT FOR IST TIME ---
+from zoneinfo import ZoneInfo
 
 # --- PDF LIBRARIES ---
 from reportlab.lib.pagesizes import letter
@@ -28,6 +28,20 @@ from reportlab.lib.enums import TA_CENTER
 SHEET_NAME = "PMS DB"
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 LOGO_FILENAME = "FINAL LOGO.png"
+
+# --- DEFAULTS ---
+DEFAULT_RATE = 4200.00
+DEFAULT_SUBJECT = "Telemetry Subscription Renewal Due"
+DEFAULT_EMAIL_BODY = """Dear Sir,
+I hope you're doing well.
+This is a gentle reminder that your telemetry subscription with Orcatech Enterprises is due for renewal for the upcoming year. We appreciate your continued trust in our services and look forward to supporting your operations with uninterrupted telemetry coverage.
+Please find the renewal details in the attachment.
+To ensure seamless service continuity, we recommend completing the renewal process before the due date. If you have any questions or need assistance with the renewal, feel free to reach out.
+Thank you for your continued partnership.
+
+*NOTE: Please do not reply to this email. As this mail is system generated. For communication mail on sales@orcatech.co.in
+Warm regards,
+ORCATECH ENTERPRISES"""
 
 # --- COMPANY DETAILS ---
 COMPANY_INFO = {
@@ -206,15 +220,13 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     buffer.seek(0)
     return buffer
 
-# --- EMAIL LOGGING (FIXED: IST TIME) ---
+# --- EMAIL LOGGING ---
 def log_email(to_email, subject, email_type="Single"):
     try:
         ws = get_worksheet(SHEET_NAME, "Email Logs")
         if ws:
-            # Set timezone to Asia/Kolkata
             ist = ZoneInfo("Asia/Kolkata")
             now = datetime.now(ist)
-            
             ws.append_row([
                 str(now.date()),
                 now.strftime("%H:%M:%S"),
@@ -228,6 +240,19 @@ def log_email(to_email, subject, email_type="Single"):
         pass
 
 # --- EMAIL FUNCTION ---
+def format_email_body_html(text):
+    """Converts plain text to HTML with specific formatting for Orcatech."""
+    # Convert newlines to HTML line breaks
+    html = text.replace("\n", "<br>")
+    
+    # Format *NOTE: (Bold Red)
+    html = html.replace("*NOTE:", "<strong style='color:red;'>*NOTE:</strong>")
+    
+    # Format email (Blue Underline)
+    html = html.replace("sales@orcatech.co.in", "<a href='mailto:sales@orcatech.co.in' style='color:blue; text-decoration:underline;'>sales@orcatech.co.in</a>")
+    
+    return f"<html><body style='font-family: Arial, sans-serif;'>{html}</body></html>"
+
 def send_email_with_attachment(to_email, subject, body, pdf_buffer, filename="Quotation.pdf", email_type="Single"):
     try:
         email_conf = st.secrets["email"]
@@ -235,11 +260,18 @@ def send_email_with_attachment(to_email, subject, body, pdf_buffer, filename="Qu
         msg['From'] = email_conf["sender_email"]
         msg['To'] = to_email
         msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'plain'))
+        
+        # Convert plain text body to formatted HTML
+        html_body = format_email_body_html(body)
+        
+        # Attach HTML body
+        msg.attach(MIMEText(html_body, 'html'))
+        
         if pdf_buffer:
             part = MIMEApplication(pdf_buffer.read(), Name=filename)
             part['Content-Disposition'] = f'attachment; filename="{filename}"'
             msg.attach(part)
+            
         server = smtplib.SMTP(email_conf["smtp_server"], email_conf["smtp_port"])
         server.starttls()
         server.login(email_conf["sender_email"], email_conf["app_password"])
@@ -569,7 +601,6 @@ def main():
             sim_man = ""
             sim_prov = "VI"
             if sim_sel == "➕ Add New...":
-                # Render directly in this column (no nested st.columns)
                 sim_man = st.text_input("New SIM Number", key="sim_man_in")
                 sim_prov = st.selectbox("Provider", ["VI", "AIRTEL", "JIO", "BSNL"], key="sim_prov_in")
             elif sim_sel != "None":
@@ -631,7 +662,7 @@ def main():
                     if sim_man:
                         if sim_man in sim_df["SIM Number"].values: update_sim_status(sim_man, "Used", sn)
                         else: append_to_sheet("Sims", {"SIM Number": sim_man, "Provider": sim_prov, "Status": "Used", "Used In S/N": sn})
-                    st.success("✅ Dispatch Saved Successfully!"); st.balloons(); st.rerun()
+                    st.success("Saved!"); st.rerun()
 
     elif menu == "Subscription Manager":
         st.subheader("🔄 Subscription & Quotation Manager")
@@ -643,6 +674,7 @@ def main():
             else:
                 tab_s, tab_b = st.tabs(["📱 Individual", "🏢 Bulk"])
                 
+                # --- INDIVIDUAL ---
                 with tab_s:
                     exp_df['Label'] = exp_df['S/N'] + " | " + exp_df['End User']
                     sel_lbl = st.selectbox("Select Device", exp_df['Label'].tolist())
@@ -651,10 +683,11 @@ def main():
                     
                     st.info(f"Product: {row['Product Name']} | Expires: {row['Renewal Date']}")
                     
+                    # QUOTE PERMISSION CHECK
                     if can_generate_quote:
                         with st.expander("📄 Generate Quote"):
                             with st.form("sq"):
-                                rate = st.number_input("Amount", 2500.0)
+                                rate = st.number_input("Amount", value=DEFAULT_RATE)
                                 valid = st.date_input("Valid Until", date.today()+relativedelta(days=15))
                                 if st.form_submit_button("Generate"):
                                     c_det = {"Client Name": row['End User']}
@@ -668,13 +701,14 @@ def main():
                             with st.expander("📧 Email"):
                                 q = st.session_state['sq_data']
                                 to = st.text_input("To", q['c'].get('Email',''), key="se_to")
-                                sub = st.text_input("Subj", f"Renewal - {sel_sn}", key="se_sub")
-                                body = st.text_area("Msg", "Please find attached.", key="se_msg")
+                                sub = st.text_input("Subj", value=DEFAULT_SUBJECT, key="se_sub")
+                                body = st.text_area("Msg", value=DEFAULT_EMAIL_BODY, height=200, key="se_msg")
                                 if st.button("Send", key="se_btn"):
                                     pdf = create_quotation_pdf(q['c'], q['d'], q['r'], q['v'])
                                     if send_email_with_attachment(to, sub, body, pdf, "Quote.pdf", email_type="Single"):
                                         st.success("Sent!"); del st.session_state['sq_data']
                     
+                    # RENEWAL PERMISSION CHECK
                     st.write("---")
                     st.markdown("### 📅 Update Subscription")
                     with st.form("sr"):
@@ -690,6 +724,7 @@ def main():
                                 if submit_renewal_request([sel_sn], new_st, dur, st.session_state.user_name):
                                     st.success("Request Submitted to Admin!"); st.rerun()
 
+                # --- BULK ---
                 with tab_b:
                     cl_list = get_clean_list(exp_df, "End User")
                     sel_cl = st.selectbox("Select Client", cl_list)
@@ -699,7 +734,7 @@ def main():
                     if can_generate_quote:
                         with st.expander("📄 Generate Bulk Quote"):
                             with st.form("bq"):
-                                rate = st.number_input("Rate/Device", 2500.0)
+                                rate = st.number_input("Rate/Device", value=DEFAULT_RATE)
                                 valid = st.date_input("Valid Until", date.today()+relativedelta(days=15))
                                 if st.form_submit_button("Generate"):
                                     c_det = {"Client Name": sel_cl}
@@ -715,8 +750,8 @@ def main():
                             with st.expander("📧 Email Bulk"):
                                 q = st.session_state['bq_data']
                                 to = st.text_input("To", q['c'].get('Email',''), key="b_to")
-                                sub = st.text_input("Subj", f"Bulk Renewal - {sel_cl}", key="b_sub")
-                                body = st.text_area("Msg", "Attached.", key="b_msg")
+                                sub = st.text_input("Subj", value=DEFAULT_SUBJECT, key="b_sub")
+                                body = st.text_area("Msg", value=DEFAULT_EMAIL_BODY, height=200, key="b_msg")
                                 if st.button("Send Bulk", key="b_btn"):
                                     pdf = create_quotation_pdf(q['c'], q['d'], q['r'], q['v'])
                                     if send_email_with_attachment(to, sub, body, pdf, "Quote.pdf", email_type="Bulk"):
@@ -808,6 +843,7 @@ def main():
         else:
             st.info("No email logs found.")
 
+    # --- ADMIN EXCLUSIVE TABS ---
     elif menu == "🔔 Approvals" and st.session_state.user_role == "Admin":
         st.subheader("🔔 Pending Renewal Requests")
         if not req_df.empty:
