@@ -76,7 +76,6 @@ def get_worksheet(sheet_name, tab_name):
     if not client: return None
     try:
         sh = client.open(sheet_name)
-        # Try to open tab, create if missing (for Requests)
         try:
             return sh.worksheet(tab_name)
         except gspread.WorksheetNotFound:
@@ -111,7 +110,6 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     elements = []
     styles = getSampleStyleSheet()
 
-    # Header
     logo = []
     if os.path.exists(LOGO_FILENAME):
         img = Image(LOGO_FILENAME, width=2*inch, height=1*inch)
@@ -132,7 +130,6 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     elements.append(Paragraph("QUOTATION", styles['Title']))
     elements.append(Spacer(1, 0.2*inch))
 
-    # Bill To
     if isinstance(client_name, dict):
         c_name = client_name.get('Client Name', '')
         c_person = client_name.get('Contact Person', '')
@@ -152,7 +149,6 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     elements.append(Paragraph(bill_to + date_info, styles['Normal']))
     elements.append(Spacer(1, 0.2*inch))
 
-    # Table
     data = [['S/N', 'Product / Model', 'Description', 'Amount (INR)']]
     subtotal = 0
     for d in device_list:
@@ -184,7 +180,6 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     elements.append(table)
     elements.append(Spacer(1, 0.3*inch))
 
-    # Bank
     bank_info = f"""<b>Bank Details for Payment:</b><br/>
     Account Name: {COMPANY_INFO['acc_name']}<br/>
     Bank Name: {COMPANY_INFO['bank_name']}<br/>
@@ -194,12 +189,10 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     elements.append(Paragraph(bank_info, styles['Normal']))
     elements.append(Spacer(1, 0.2*inch))
 
-    # Disclaimer
     disc_style = ParagraphStyle('Disclaimer', parent=styles['Normal'], fontSize=8, textColor=colors.red)
     disc_text = "<b>Disclaimer:</b> Orcatech Enterprises shall not be held liable for any data loss or unavailability of historical records occurring after the subscription expiry date. Please ensure timely renewal to maintain continuous data retention."
     elements.append(Paragraph(disc_text, disc_style))
     
-    # Footer
     elements.append(Spacer(1, 0.5*inch))
     footer_style = ParagraphStyle('Footer', parent=styles['Italic'], fontSize=9, textColor=colors.darkgrey, alignment=TA_CENTER)
     elements.append(Paragraph("This is a computer-generated document and does not require a physical signature.", footer_style))
@@ -320,7 +313,6 @@ def update_client_details(original_name, updated_data):
     except Exception: return False
     return False
 
-# --- REQUEST SYSTEM ---
 def submit_renewal_request(sn_list, new_start, duration, requested_by):
     req_id = str(uuid.uuid4())[:8]
     data = {
@@ -335,7 +327,6 @@ def submit_renewal_request(sn_list, new_start, duration, requested_by):
     return append_to_sheet("Renewal Requests", data)
 
 def approve_request(req_id, sn_list_str, new_start, duration):
-    # 1. Update Products
     sn_list = sn_list_str.split(",")
     new_end = calculate_renewal(new_start, duration)
     success_count = 0
@@ -343,7 +334,6 @@ def approve_request(req_id, sn_list_str, new_start, duration):
         if update_product_subscription(sn.strip(), str(new_start), duration, str(new_end)):
             success_count += 1
             
-    # 2. Mark Request as Approved
     ws = get_worksheet(SHEET_NAME, "Renewal Requests")
     if ws:
         cell = ws.find(req_id)
@@ -438,11 +428,9 @@ def main():
         render_centered_logo(LOGO_FILENAME, 120)
         st.markdown("---")
         
-        # NAVIGATION
         if st.session_state.user_role == "Admin":
             available_options = NAV_TABS + ["🔔 Approvals", "👤 User Manager"]
         else:
-            # Only show actual TABS, filter out functional permissions like "ACCESS:..."
             available_options = [tab for tab in NAV_TABS if tab in st.session_state.user_perms]
             if not available_options: available_options = ["Dashboard"]
 
@@ -467,7 +455,6 @@ def main():
         prod_df = load_data("Products")
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
-        # Load requests if Admin
         req_df = load_data("Renewal Requests") if st.session_state.user_role == "Admin" else pd.DataFrame()
 
         if prod_df.empty or "S/N" not in prod_df.columns:
@@ -552,16 +539,13 @@ def main():
             st.markdown("### 👥 Client & Partner")
             col_p, col_c, col_i, col_d = st.columns(4)
             
-            p_opts = ["Select..."] + get_clean_list(prod_df, "Channel Partner") + ["➕ Create..."]
-            p_sel = col_p.selectbox("Partner", p_opts)
+            p_sel = col_p.selectbox("Partner", ["Select..."] + get_clean_list(prod_df, "Channel Partner") + ["➕ Create..."])
             partner = col_p.text_input("New Partner Name") if p_sel == "➕ Create..." else (p_sel if p_sel != "Select..." else "")
 
-            c_opts = ["Select..."] + get_clean_list(client_df, "Client Name") + ["➕ Create..."]
-            c_sel = col_c.selectbox("Client", c_opts)
+            c_sel = col_c.selectbox("Client", ["Select..."] + get_clean_list(client_df, "Client Name") + ["➕ Create..."])
             client = col_c.text_input("New Client Name") if c_sel == "➕ Create..." else (c_sel if c_sel != "Select..." else "")
 
-            ind_opts = ["Select..."] + get_clean_list(prod_df, "Industry Category") + ["➕ Create..."]
-            i_sel = col_i.selectbox("Industry", ind_opts)
+            i_sel = col_i.selectbox("Industry", ["Select..."] + get_clean_list(prod_df, "Industry Category") + ["➕ Create..."])
             industry = col_i.text_input("New Industry") if i_sel == "➕ Create..." else (i_sel if i_sel != "Select..." else "")
 
             install_d = col_d.date_input("Installation Date")
