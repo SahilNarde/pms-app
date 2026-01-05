@@ -358,16 +358,13 @@ def main():
         st.session_state.user_name = ""
 
     if not st.session_state.logged_in:
-        # Use wider middle column to hold side-by-side layout
         c1, c2, c3 = st.columns([1, 3, 1])
         with c2:
-            st.write("") # Spacer
             st.write("") 
-            # --- SPLIT LAYOUT: LOGO LEFT | FORM RIGHT ---
+            st.write("") 
             c_logo, c_form = st.columns([1, 1.5], gap="large")
             
             with c_logo:
-                # Vertical spacer to align logo with form
                 st.write("")
                 st.write("")
                 if os.path.exists(LOGO_FILENAME):
@@ -388,40 +385,31 @@ def main():
         return
 
     with st.sidebar:
-        # --- LOGO ON SIDEBAR (CENTERED) ---
         render_centered_logo(LOGO_FILENAME, 120)
         st.markdown("---")
         
-        # NAVIGATION MENU
         menu = st.sidebar.radio("Go to:", ["Dashboard", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "IMPORT/EXPORT DB"])
         
-        # --- BOTTOM SECTION ---
         st.markdown("---")
-        # Refresh button (small)
         if st.button("🔄 Refresh Data"): 
             load_data.clear()
             st.rerun()
             
-        # Logout button
         if st.button("🚪 Logout", type="primary", use_container_width=True):
             st.session_state.logged_in = False
             st.rerun()
 
         st.markdown("### 📊 Database Stats")
-        # Placeholder for stats
         stats_placeholder = st.empty()
 
-    # --- TOP HEADER (USER INFO RIGHT) ---
     c_title, c_user = st.columns([3, 1])
     with c_title:
         st.title("🏭 PMS (Cloud)")
     with c_user:
-        # User Name top right
         st.success(f"👤 **{st.session_state.user_name}**")
         
     st.markdown("---")
 
-    # --- LOAD DATA ---
     try:
         prod_df = load_data("Products")
         client_df = load_data("Clients")
@@ -434,7 +422,6 @@ def main():
         if sim_df.empty or "SIM Number" not in sim_df.columns:
             sim_df = pd.DataFrame(columns=["SIM Number", "Status", "Provider", "Plan Details", "Entry Date", "Used In S/N"])
 
-        # Populate Stats
         with stats_placeholder.container():
             st.caption(f"📦 Products: {len(prod_df)}")
             st.caption(f"👥 Clients: {len(client_df)}")
@@ -672,7 +659,16 @@ def main():
 
     elif menu == "Client Master":
         st.subheader("👥 Client Master")
-        st.dataframe(client_df, use_container_width=True)
+        
+        # --- NEW: CLIENT SEARCH ---
+        search_client = st.text_input("🔍 Search Clients", placeholder="Type Name, Email, or Phone...")
+        
+        if search_client:
+            mask = client_df.astype(str).apply(lambda x: x.str.contains(search_client, case=False)).any(axis=1)
+            st.dataframe(client_df[mask], use_container_width=True)
+        else:
+            st.dataframe(client_df, use_container_width=True)
+
         clients = get_clean_list(client_df, "Client Name")
         if clients:
             with st.expander("Edit Client Details"):
