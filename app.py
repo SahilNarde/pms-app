@@ -42,7 +42,6 @@ COMPANY_INFO = {
 }
 
 # --- PERMISSION CONSTANTS ---
-# REMOVED EMOJI FROM "Email Logs"
 NAV_TABS = ["Dashboard", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "Email Logs", "IMPORT/EXPORT DB"]
 FUNC_PERMS = ["ACCESS: Generate Quote", "ACCESS: Direct Renewal"]
 ALL_OPTS = NAV_TABS + FUNC_PERMS
@@ -542,71 +541,109 @@ def main():
 
     elif menu == "New Dispatch Entry":
         st.subheader("📝 New Dispatch")
-        with st.form("dispatch_form"):
-            st.markdown("### 🛠️ Device & Network")
-            c1, c2, c3, c4 = st.columns(4)
-            sn = c1.text_input("Product S/N (Required)")
-            oem = c1.text_input("OEM S/N")
-            prod = c2.selectbox("Product Name", BASE_PRODUCT_LIST)
-            model = c2.text_input("Model")
-            conn = c3.selectbox("Connectivity", ["4G", "2G", "NB-IoT", "WiFi", "LoRaWAN"])
-            cable = c3.text_input("Cable Length")
-            uid = c4.text_input("Device UID")
-            sim_sel = c4.selectbox("SIM Card", ["None"] + get_clean_list(sim_df[sim_df["Status"] == "Available"], "SIM Number") + ["➕ Add New..."])
+        # FIXED: Removed Form Wrapper & used correct layout nesting
+        
+        st.markdown("### 🛠️ Device & Network")
+        c1, c2, c3, c4 = st.columns(4)
+        
+        # COLUMN 1
+        with c1:
+            sn = st.text_input("Product S/N (Required)", key="sn_in")
+            oem = st.text_input("OEM S/N", key="oem_in")
+        
+        # COLUMN 2
+        with c2:
+            prod = st.selectbox("Product Name", BASE_PRODUCT_LIST, key="prod_in")
+            model = st.text_input("Model", key="model_in")
+        
+        # COLUMN 3
+        with c3:
+            conn = st.selectbox("Connectivity", ["4G", "2G", "NB-IoT", "WiFi", "LoRaWAN"], key="conn_in")
+            cable = st.text_input("Cable Length", key="cable_in")
+        
+        # COLUMN 4 (SIM LOGIC)
+        with c4:
+            uid = st.text_input("Device UID", key="uid_in")
+            avail_sims = get_clean_list(sim_df[sim_df["Status"] == "Available"], "SIM Number")
+            sim_opts = ["None"] + avail_sims + ["➕ Add New..."]
+            sim_sel = st.selectbox("SIM Card", sim_opts, key="sim_sel")
             
-            sim_man, sim_prov = "", "VI"
+            sim_man = ""
+            sim_prov = "VI"
             if sim_sel == "➕ Add New...":
-                c_s1, c_s2 = st.columns(2)
-                sim_man = c_s1.text_input("New SIM Number")
-                sim_prov = c_s2.selectbox("Provider", ["VI", "AIRTEL", "JIO", "BSNL"])
-            elif sim_sel != "None": sim_man = sim_sel
+                sim_man = st.text_input("Enter New SIM", key="sim_man_in")
+                sim_prov = st.selectbox("SIM Provider", ["VI", "AIRTEL", "JIO", "BSNL"], key="sim_prov_in")
+            elif sim_sel != "None":
+                sim_man = sim_sel
 
-            st.divider()
-            st.markdown("### 👥 Client & Partner")
-            col_p, col_c, col_i, col_d = st.columns(4)
-            
-            p_sel = col_p.selectbox("Partner", ["Select..."] + get_clean_list(prod_df, "Channel Partner") + ["➕ Create..."])
+        st.divider()
+        st.markdown("### 👥 Client & Partner")
+        col_p, col_c, col_i, col_d = st.columns(4)
+
+        # PARTNER LOGIC
+        with col_p:
+            p_opts = ["Select..."] + get_clean_list(prod_df, "Channel Partner") + ["➕ Create..."]
+            p_sel = st.selectbox("Channel Partner", p_opts, key="p_sel")
             partner = p_sel
             if p_sel == "➕ Create...":
-                partner = col_p.text_input("New Partner Name")
+                partner = st.text_input("New Partner Name", key="p_new")
             elif p_sel == "Select...":
                 partner = ""
 
-            c_sel = col_c.selectbox("Client", ["Select..."] + get_clean_list(client_df, "Client Name") + ["➕ Create..."])
+        # CLIENT LOGIC
+        with col_c:
+            c_opts = ["Select..."] + get_clean_list(client_df, "Client Name") + ["➕ Create..."]
+            c_sel = st.selectbox("End User (Client)", c_opts, key="c_sel")
             client = c_sel
             if c_sel == "➕ Create...":
-                client = col_c.text_input("New Client Name")
+                client = st.text_input("New Client Name", key="c_new")
             elif c_sel == "Select...":
                 client = ""
 
-            i_sel = col_i.selectbox("Industry", ["Select..."] + get_clean_list(prod_df, "Industry Category") + ["➕ Create..."])
+        # INDUSTRY LOGIC
+        with col_i:
+            i_opts = ["Select..."] + get_clean_list(prod_df, "Industry Category") + ["➕ Create..."]
+            i_sel = st.selectbox("Industry", i_opts, key="i_sel")
             industry = i_sel
             if i_sel == "➕ Create...":
-                industry = col_i.text_input("New Industry")
+                industry = st.text_input("New Industry", key="i_new")
             elif i_sel == "Select...":
                 industry = ""
 
-            install_d = col_d.date_input("Installation Date")
-            valid = col_d.number_input("Validity", 1, 60, 12)
-            activ_d = col_d.date_input("Activation Date")
+        # DATES LOGIC
+        with col_d:
+            install_d = st.date_input("Installation Date", key="d_inst")
+            valid = st.number_input("Validity (Months)", 1, 60, 12, key="d_valid")
+            activ_d = st.date_input("Activation Date", key="d_activ")
 
-            if st.form_submit_button("💾 Save Dispatch"):
-                if not sn or not client: st.error("S/N and Client Required!")
-                elif sn in prod_df["S/N"].values: st.error("S/N Exists!")
-                else:
-                    new_prod = {
-                        "S/N": sn, "OEM S/N": oem, "Product Name": prod, "Model": model, "Connectivity (2G/4G)": conn,
-                        "Cable Length": cable, "Installation Date": str(install_d), "Activation Date": str(activ_d),
-                        "Validity (Months)": valid, "Renewal Date": str(calculate_renewal(activ_d, valid)),
-                        "Device UID": uid, "SIM Number": sim_man, "SIM Provider": sim_prov,
-                        "Channel Partner": partner, "End User": client, "Industry Category": industry
-                    }
-                    if append_to_sheet("Products", new_prod):
-                        if c_sel == "➕ Create...": append_to_sheet("Clients", {"Client Name": client})
-                        if sim_man:
-                            if sim_man in sim_df["SIM Number"].values: update_sim_status(sim_man, "Used", sn)
-                            else: append_to_sheet("Sims", {"SIM Number": sim_man, "Provider": sim_prov, "Status": "Used", "Used In S/N": sn})
-                        st.success("Saved!"); st.rerun()
+        st.markdown("---")
+        if st.button("💾 Save Dispatch Entry", type="primary", use_container_width=True):
+            if not sn or not client:
+                st.error("S/N and Client are required fields!")
+            elif sn in prod_df["S/N"].values:
+                st.error("S/N already exists in the database!")
+            else:
+                renew_date = calculate_renewal(activ_d, valid)
+                new_prod = {
+                    "S/N": sn, "OEM S/N": oem, "Product Name": prod, "Model": model,
+                    "Connectivity (2G/4G)": conn, "Cable Length": cable, "Installation Date": str(install_d),
+                    "Activation Date": str(activ_d), "Validity (Months)": valid, "Renewal Date": str(renew_date),
+                    "Device UID": uid, "SIM Number": sim_man, "SIM Provider": sim_prov,
+                    "Channel Partner": partner, "End User": client, "Industry Category": industry
+                }
+                
+                # SAVE DATA
+                if append_to_sheet("Products", new_prod):
+                    # Save Client if new
+                    if c_sel == "➕ Create...": 
+                        append_to_sheet("Clients", {"Client Name": client})
+                    # Save/Update SIM
+                    if sim_man:
+                        if sim_man in sim_df["SIM Number"].values: 
+                            update_sim_status(sim_man, "Used", sn)
+                        else: 
+                            append_to_sheet("Sims", {"SIM Number": sim_man, "Provider": sim_prov, "Status": "Used", "Used In S/N": sn, "Entry Date": str(date.today())})
+                    st.success("✅ Dispatch Saved Successfully!"); st.balloons(); st.rerun()
 
     elif menu == "Subscription Manager":
         st.subheader("🔄 Subscription & Quotation Manager")
@@ -770,7 +807,6 @@ def main():
                     if bulk_append_to_sheet("Products", nd): st.success("Done!"); st.rerun()
             except Exception as e: st.error(str(e))
 
-    # --- EMAIL LOGS (AVAILABLE TO ALL PERMISSION HOLDERS) ---
     elif menu == "Email Logs":
         st.subheader("📨 Email History Log")
         search_term = st.text_input("🔍 Search Logs", placeholder="Subject, Recipient, or Date...")
