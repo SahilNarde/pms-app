@@ -42,8 +42,8 @@ COMPANY_INFO = {
 }
 
 # --- PERMISSION CONSTANTS ---
-# Added Email Logs to standard tabs so it can be assigned to users
-NAV_TABS = ["Dashboard", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "📨 Email Logs", "IMPORT/EXPORT DB"]
+# REMOVED EMOJI FROM "Email Logs"
+NAV_TABS = ["Dashboard", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "Email Logs", "IMPORT/EXPORT DB"]
 FUNC_PERMS = ["ACCESS: Generate Quote", "ACCESS: Direct Renewal"]
 ALL_OPTS = NAV_TABS + FUNC_PERMS
 
@@ -452,14 +452,10 @@ def main():
         render_centered_logo(LOGO_FILENAME, 120)
         st.markdown("---")
         
-        # Determine available tabs
         if st.session_state.user_role == "Admin":
-            # Admins get everything
             available_options = NAV_TABS + ["🔔 Approvals", "👤 User Manager"]
         else:
-            # Users get assigned tabs
             available_options = [tab for tab in NAV_TABS if tab in st.session_state.user_perms]
-            # Ensure Dashboard is default if no specific tabs assigned
             if not available_options: available_options = ["Dashboard"]
 
         menu = st.sidebar.radio("Go to:", available_options)
@@ -484,7 +480,7 @@ def main():
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
         req_df = load_data("Renewal Requests") if st.session_state.user_role == "Admin" else pd.DataFrame()
-        email_df = load_data("Email Logs") # Load for everyone
+        email_df = load_data("Email Logs")
 
         if prod_df.empty or "S/N" not in prod_df.columns:
             prod_df = pd.DataFrame(columns=["S/N", "End User", "Product Name", "Model", "Renewal Date", "Industry Category", "Installation Date", "Activation Date", "Validity (Months)", "Channel Partner", "Device UID", "Connectivity (2G/4G)", "Cable Length", "SIM Number", "SIM Provider"])
@@ -775,27 +771,18 @@ def main():
             except Exception as e: st.error(str(e))
 
     # --- EMAIL LOGS (AVAILABLE TO ALL PERMISSION HOLDERS) ---
-    elif menu == "📨 Email Logs":
+    elif menu == "Email Logs":
         st.subheader("📨 Email History Log")
-        
-        # SEARCH BAR
         search_term = st.text_input("🔍 Search Logs", placeholder="Subject, Recipient, or Date...")
         
-        # FILTER DATA
         if not email_df.empty:
-            # 1. Role-Based Filter
             if st.session_state.user_role != "Admin":
-                # Users only see their own sent emails
                 filtered_df = email_df[email_df["Sender"] == st.session_state.user_name]
             else:
-                # Admins see everything
                 filtered_df = email_df
             
-            # 2. Search Text Filter
             if search_term:
-                filtered_df = filtered_df[
-                    filtered_df.astype(str).apply(lambda x: x.str.contains(search_term, case=False)).any(axis=1)
-                ]
+                filtered_df = filtered_df[filtered_df.astype(str).apply(lambda x: x.str.contains(search_term, case=False)).any(axis=1)]
             
             st.dataframe(filtered_df, use_container_width=True)
         else:
