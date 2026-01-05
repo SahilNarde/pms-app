@@ -42,7 +42,8 @@ COMPANY_INFO = {
 }
 
 # --- PERMISSION CONSTANTS ---
-NAV_TABS = ["Dashboard", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "IMPORT/EXPORT DB"]
+# Added Email Logs to standard tabs so it can be assigned to users
+NAV_TABS = ["Dashboard", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "📨 Email Logs", "IMPORT/EXPORT DB"]
 FUNC_PERMS = ["ACCESS: Generate Quote", "ACCESS: Direct Renewal"]
 ALL_OPTS = NAV_TABS + FUNC_PERMS
 
@@ -81,6 +82,10 @@ def get_worksheet(sheet_name, tab_name):
         except gspread.WorksheetNotFound:
             if tab_name == "Renewal Requests":
                 return sh.add_worksheet(title="Renewal Requests", rows=100, cols=10)
+            elif tab_name == "Email Logs":
+                ws = sh.add_worksheet(title="Email Logs", rows=100, cols=10)
+                ws.append_row(["Date", "Time", "Sender", "Recipient", "Subject", "Type", "Status"])
+                return ws
             return None
     except Exception as e:
         return None
@@ -201,8 +206,26 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     buffer.seek(0)
     return buffer
 
+# --- EMAIL LOGGING ---
+def log_email(to_email, subject, email_type="Single"):
+    try:
+        ws = get_worksheet(SHEET_NAME, "Email Logs")
+        if ws:
+            now = datetime.now()
+            ws.append_row([
+                str(now.date()),
+                now.strftime("%H:%M:%S"),
+                st.session_state.get('user_name', 'System'),
+                to_email,
+                subject,
+                email_type,
+                "Sent"
+            ])
+    except Exception:
+        pass
+
 # --- EMAIL FUNCTION ---
-def send_email_with_attachment(to_email, subject, body, pdf_buffer, filename="Quotation.pdf"):
+def send_email_with_attachment(to_email, subject, body, pdf_buffer, filename="Quotation.pdf", email_type="Single"):
     try:
         email_conf = st.secrets["email"]
         msg = MIMEMultipart()
@@ -219,6 +242,7 @@ def send_email_with_attachment(to_email, subject, body, pdf_buffer, filename="Qu
         server.login(email_conf["sender_email"], email_conf["app_password"])
         server.sendmail(email_conf["sender_email"], to_email, msg.as_string())
         server.quit()
+        log_email(to_email, subject, email_type)
         return True
     except Exception as e:
         st.error(f"Email Error: {e}")
@@ -428,10 +452,14 @@ def main():
         render_centered_logo(LOGO_FILENAME, 120)
         st.markdown("---")
         
+        # Determine available tabs
         if st.session_state.user_role == "Admin":
+            # Admins get everything
             available_options = NAV_TABS + ["🔔 Approvals", "👤 User Manager"]
         else:
+            # Users get assigned tabs
             available_options = [tab for tab in NAV_TABS if tab in st.session_state.user_perms]
+            # Ensure Dashboard is default if no specific tabs assigned
             if not available_options: available_options = ["Dashboard"]
 
         menu = st.sidebar.radio("Go to:", available_options)
@@ -456,6 +484,7 @@ def main():
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
         req_df = load_data("Renewal Requests") if st.session_state.user_role == "Admin" else pd.DataFrame()
+        email_df = load_data("Email Logs") # Load for everyone
 
         if prod_df.empty or "S/N" not in prod_df.columns:
             prod_df = pd.DataFrame(columns=["S/N", "End User", "Product Name", "Model", "Renewal Date", "Industry Category", "Installation Date", "Activation Date", "Validity (Months)", "Channel Partner", "Device UID", "Connectivity (2G/4G)", "Cable Length", "SIM Number", "SIM Provider"])
@@ -515,77 +544,73 @@ def main():
                 elif append_to_sheet("Sims", {"SIM Number": s_num, "Provider": s_prov, "Status": "Available"}): st.success("Added"); st.rerun()
         st.dataframe(sim_df, use_container_width=True)
 
-    # --- NEW DISPATCH ENTRY (FIXED - NO FORM WRAPPER) ---
     elif menu == "New Dispatch Entry":
         st.subheader("📝 New Dispatch")
-        # Removing st.form allows the "Create New" dropdowns to instantly reveal the text inputs
-        
-        st.markdown("### 🛠️ Device & Network")
-        c1, c2, c3, c4 = st.columns(4)
-        sn = c1.text_input("Product S/N (Required)")
-        oem = c1.text_input("OEM S/N")
-        prod = c2.selectbox("Product Name", BASE_PRODUCT_LIST)
-        model = c2.text_input("Model")
-        conn = c3.selectbox("Connectivity", ["4G", "2G", "NB-IoT", "WiFi", "LoRaWAN"])
-        cable = c3.text_input("Cable Length")
-        uid = c4.text_input("Device UID")
-        sim_sel = c4.selectbox("SIM Card", ["None"] + get_clean_list(sim_df[sim_df["Status"] == "Available"], "SIM Number") + ["➕ Add New..."])
-        
-        sim_man, sim_prov = "", "VI"
-        if sim_sel == "➕ Add New...":
-            c_s1, c_s2 = st.columns(2)
-            sim_man = c_s1.text_input("New SIM Number")
-            sim_prov = c_s2.selectbox("Provider", ["VI", "AIRTEL", "JIO", "BSNL"])
-        elif sim_sel != "None": sim_man = sim_sel
+        with st.form("dispatch_form"):
+            st.markdown("### 🛠️ Device & Network")
+            c1, c2, c3, c4 = st.columns(4)
+            sn = c1.text_input("Product S/N (Required)")
+            oem = c1.text_input("OEM S/N")
+            prod = c2.selectbox("Product Name", BASE_PRODUCT_LIST)
+            model = c2.text_input("Model")
+            conn = c3.selectbox("Connectivity", ["4G", "2G", "NB-IoT", "WiFi", "LoRaWAN"])
+            cable = c3.text_input("Cable Length")
+            uid = c4.text_input("Device UID")
+            sim_sel = c4.selectbox("SIM Card", ["None"] + get_clean_list(sim_df[sim_df["Status"] == "Available"], "SIM Number") + ["➕ Add New..."])
+            
+            sim_man, sim_prov = "", "VI"
+            if sim_sel == "➕ Add New...":
+                c_s1, c_s2 = st.columns(2)
+                sim_man = c_s1.text_input("New SIM Number")
+                sim_prov = c_s2.selectbox("Provider", ["VI", "AIRTEL", "JIO", "BSNL"])
+            elif sim_sel != "None": sim_man = sim_sel
 
-        st.divider()
-        st.markdown("### 👥 Client & Partner")
-        col_p, col_c, col_i, col_d = st.columns(4)
-        
-        p_sel = col_p.selectbox("Partner", ["Select..."] + get_clean_list(prod_df, "Channel Partner") + ["➕ Create..."])
-        partner = p_sel
-        if p_sel == "➕ Create...":
-            partner = col_p.text_input("New Partner Name")
-        elif p_sel == "Select...":
-            partner = ""
+            st.divider()
+            st.markdown("### 👥 Client & Partner")
+            col_p, col_c, col_i, col_d = st.columns(4)
+            
+            p_sel = col_p.selectbox("Partner", ["Select..."] + get_clean_list(prod_df, "Channel Partner") + ["➕ Create..."])
+            partner = p_sel
+            if p_sel == "➕ Create...":
+                partner = col_p.text_input("New Partner Name")
+            elif p_sel == "Select...":
+                partner = ""
 
-        c_sel = col_c.selectbox("Client", ["Select..."] + get_clean_list(client_df, "Client Name") + ["➕ Create..."])
-        client = c_sel
-        if c_sel == "➕ Create...":
-            client = col_c.text_input("New Client Name")
-        elif c_sel == "Select...":
-            client = ""
+            c_sel = col_c.selectbox("Client", ["Select..."] + get_clean_list(client_df, "Client Name") + ["➕ Create..."])
+            client = c_sel
+            if c_sel == "➕ Create...":
+                client = col_c.text_input("New Client Name")
+            elif c_sel == "Select...":
+                client = ""
 
-        i_sel = col_i.selectbox("Industry", ["Select..."] + get_clean_list(prod_df, "Industry Category") + ["➕ Create..."])
-        industry = i_sel
-        if i_sel == "➕ Create...":
-            industry = col_i.text_input("New Industry")
-        elif i_sel == "Select...":
-            industry = ""
+            i_sel = col_i.selectbox("Industry", ["Select..."] + get_clean_list(prod_df, "Industry Category") + ["➕ Create..."])
+            industry = i_sel
+            if i_sel == "➕ Create...":
+                industry = col_i.text_input("New Industry")
+            elif i_sel == "Select...":
+                industry = ""
 
-        install_d = col_d.date_input("Installation Date")
-        valid = col_d.number_input("Validity", 1, 60, 12)
-        activ_d = col_d.date_input("Activation Date")
+            install_d = col_d.date_input("Installation Date")
+            valid = col_d.number_input("Validity", 1, 60, 12)
+            activ_d = col_d.date_input("Activation Date")
 
-        st.markdown("---")
-        if st.button("💾 Save Dispatch Entry", type="primary", use_container_width=True):
-            if not sn or not client: st.error("S/N and Client Required!")
-            elif sn in prod_df["S/N"].values: st.error("S/N Exists!")
-            else:
-                renew_date = calculate_renewal(activ_d, valid)
-                new_prod = {
-                    "S/N": sn, "OEM S/N": oem, "Product Name": prod, "Model": model, "Connectivity (2G/4G)": conn,
-                    "Cable Length": cable, "Installation Date": str(install_d), "Activation Date": str(activ_d),
-                    "Validity (Months)": valid, "Renewal Date": str(renew_date),
-                    "Device UID": uid, "SIM Number": sim_man, "SIM Provider": sim_prov,
-                    "Channel Partner": partner, "End User": client, "Industry Category": industry
-                }
-                if append_to_sheet("Products", new_prod):
-                    if c_sel == "➕ Create...": append_to_sheet("Clients", {"Client Name": client})
-                    if sim_man:
-                        if sim_man in sim_df["SIM Number"].values: update_sim_status(sim_man, "Used", sn)
-                        else: append_to_sheet("Sims", {"SIM Number": sim_man, "Provider": sim_prov, "Status": "Used", "Used In S/N": sn})
-                    st.success("✅ Dispatch Saved Successfully!"); st.balloons(); st.rerun()
+            if st.form_submit_button("💾 Save Dispatch"):
+                if not sn or not client: st.error("S/N and Client Required!")
+                elif sn in prod_df["S/N"].values: st.error("S/N Exists!")
+                else:
+                    new_prod = {
+                        "S/N": sn, "OEM S/N": oem, "Product Name": prod, "Model": model, "Connectivity (2G/4G)": conn,
+                        "Cable Length": cable, "Installation Date": str(install_d), "Activation Date": str(activ_d),
+                        "Validity (Months)": valid, "Renewal Date": str(calculate_renewal(activ_d, valid)),
+                        "Device UID": uid, "SIM Number": sim_man, "SIM Provider": sim_prov,
+                        "Channel Partner": partner, "End User": client, "Industry Category": industry
+                    }
+                    if append_to_sheet("Products", new_prod):
+                        if c_sel == "➕ Create...": append_to_sheet("Clients", {"Client Name": client})
+                        if sim_man:
+                            if sim_man in sim_df["SIM Number"].values: update_sim_status(sim_man, "Used", sn)
+                            else: append_to_sheet("Sims", {"SIM Number": sim_man, "Provider": sim_prov, "Status": "Used", "Used In S/N": sn})
+                        st.success("Saved!"); st.rerun()
 
     elif menu == "Subscription Manager":
         st.subheader("🔄 Subscription & Quotation Manager")
@@ -628,7 +653,7 @@ def main():
                                 body = st.text_area("Msg", "Please find attached.")
                                 if st.button("Send"):
                                     pdf = create_quotation_pdf(q['c'], q['d'], q['r'], q['v'])
-                                    if send_email_with_attachment(to, sub, body, pdf, "Quote.pdf"):
+                                    if send_email_with_attachment(to, sub, body, pdf, "Quote.pdf", email_type="Single"):
                                         st.success("Sent!"); del st.session_state['sq_data']
                     
                     # RENEWAL PERMISSION CHECK
@@ -677,7 +702,7 @@ def main():
                                 body = st.text_area("Msg", "Attached.", key="b_msg")
                                 if st.button("Send Bulk"):
                                     pdf = create_quotation_pdf(q['c'], q['d'], q['r'], q['v'])
-                                    if send_email_with_attachment(to, sub, body, pdf, "Quote.pdf"):
+                                    if send_email_with_attachment(to, sub, body, pdf, "Quote.pdf", email_type="Bulk"):
                                         st.success("Sent!"); del st.session_state['bq_data']
 
                     st.write("---")
@@ -748,6 +773,33 @@ def main():
                 if st.button("Upload"): 
                     if bulk_append_to_sheet("Products", nd): st.success("Done!"); st.rerun()
             except Exception as e: st.error(str(e))
+
+    # --- EMAIL LOGS (AVAILABLE TO ALL PERMISSION HOLDERS) ---
+    elif menu == "📨 Email Logs":
+        st.subheader("📨 Email History Log")
+        
+        # SEARCH BAR
+        search_term = st.text_input("🔍 Search Logs", placeholder="Subject, Recipient, or Date...")
+        
+        # FILTER DATA
+        if not email_df.empty:
+            # 1. Role-Based Filter
+            if st.session_state.user_role != "Admin":
+                # Users only see their own sent emails
+                filtered_df = email_df[email_df["Sender"] == st.session_state.user_name]
+            else:
+                # Admins see everything
+                filtered_df = email_df
+            
+            # 2. Search Text Filter
+            if search_term:
+                filtered_df = filtered_df[
+                    filtered_df.astype(str).apply(lambda x: x.str.contains(search_term, case=False)).any(axis=1)
+                ]
+            
+            st.dataframe(filtered_df, use_container_width=True)
+        else:
+            st.info("No email logs found.")
 
     # --- ADMIN EXCLUSIVE TABS ---
     elif menu == "🔔 Approvals" and st.session_state.user_role == "Admin":
