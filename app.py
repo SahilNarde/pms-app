@@ -40,21 +40,18 @@ COMPANY_INFO = {
     "branch": "NANDED PHATA"
 }
 
+# --- CONSTANTS ---
+BASE_PRODUCT_LIST = ["DWLR", "FM", "OCFM", "ARG", "LM", "LC", "Custom"]
+ALL_SYSTEM_TABS = ["Dashboard", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "IMPORT/EXPORT DB"]
+
 st.set_page_config(page_title="Product Management System", page_icon="🏭", layout="wide")
 
-# --- CUSTOM CSS FOR LAYOUT ---
+# --- CUSTOM CSS ---
 st.markdown(
     """
     <style>
-        /* Reduce sidebar padding */
-        [data-testid="stSidebar"] .block-container {
-            padding-top: 1rem;
-            padding-bottom: 1rem;
-        }
-        /* Align user badge to the right */
-        div[data-testid="column"] {
-            align-items: center;
-        }
+        [data-testid="stSidebar"] .block-container { padding-top: 1rem; padding-bottom: 1rem; }
+        div[data-testid="column"] { align-items: center; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -106,7 +103,7 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     elements = []
     styles = getSampleStyleSheet()
 
-    # 1. Header
+    # Logo & Header
     logo = []
     if os.path.exists(LOGO_FILENAME):
         img = Image(LOGO_FILENAME, width=2*inch, height=1*inch)
@@ -124,11 +121,10 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     elements.append(header_table)
     elements.append(Spacer(1, 0.2*inch))
     
-    # 2. Title
     elements.append(Paragraph("QUOTATION", styles['Title']))
     elements.append(Spacer(1, 0.2*inch))
 
-    # 3. Bill To
+    # Bill To
     if isinstance(client_name, dict):
         c_name = client_name.get('Client Name', '')
         c_person = client_name.get('Contact Person', '')
@@ -148,7 +144,7 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     elements.append(Paragraph(bill_to + date_info, styles['Normal']))
     elements.append(Spacer(1, 0.2*inch))
 
-    # 4. Table
+    # Items Table
     data = [['S/N', 'Product / Model', 'Description', 'Amount (INR)']]
     subtotal = 0
     for d in device_list:
@@ -180,7 +176,7 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     elements.append(table)
     elements.append(Spacer(1, 0.3*inch))
 
-    # 5. Bank Info
+    # Bank Info
     bank_info = f"""<b>Bank Details for Payment:</b><br/>
     Account Name: {COMPANY_INFO['acc_name']}<br/>
     Bank Name: {COMPANY_INFO['bank_name']}<br/>
@@ -190,12 +186,12 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     elements.append(Paragraph(bank_info, styles['Normal']))
     elements.append(Spacer(1, 0.2*inch))
 
-    # 6. Disclaimer
+    # Disclaimer
     disc_style = ParagraphStyle('Disclaimer', parent=styles['Normal'], fontSize=8, textColor=colors.red)
     disc_text = "<b>Disclaimer:</b> Orcatech Enterprises shall not be held liable for any data loss or unavailability of historical records occurring after the subscription expiry date. Please ensure timely renewal to maintain continuous data retention."
     elements.append(Paragraph(disc_text, disc_style))
     
-    # 7. Footer
+    # Footer
     elements.append(Spacer(1, 0.5*inch))
     footer_style = ParagraphStyle('Footer', parent=styles['Italic'], fontSize=9, textColor=colors.darkgrey, alignment=TA_CENTER)
     elements.append(Paragraph("This is a computer-generated document and does not require a physical signature.", footer_style))
@@ -274,7 +270,6 @@ def bulk_append_to_sheet(tab_name, df):
             
         clean_headers = [h.strip() for h in sheet_headers]
         df_sorted = df[clean_headers]
-        
         data_to_upload = df_sorted.astype(str).values.tolist()
         ws.append_rows(data_to_upload)
         load_data.clear()
@@ -342,20 +337,63 @@ def convert_all_to_excel(dfs_dict):
             df.to_excel(writer, sheet_name=sheet_name, index=False)
     return output.getvalue()
 
+# --- AUTH & USER MANAGEMENT ---
 def check_login(username, password):
+    """
+    Returns dict: {name, role, permissions} or None
+    """
     ws = get_worksheet(SHEET_NAME, "Credentials")
     if not ws: return None
     data = ws.get_all_values()
     if not data: return None
-    df = pd.DataFrame(data[1:], columns=[h.strip() for h in data[0]])
+    
+    headers = [h.strip() for h in data[0]]
+    df = pd.DataFrame(data[1:], columns=headers)
+    
+    # Ensure required columns exist
+    for col in ['Username', 'Password', 'Name', 'Role', 'Permissions']:
+        if col not in df.columns:
+            return None # Invalid credential sheet structure
+
     user_match = df[(df['Username'].str.strip() == username.strip()) & (df['Password'].str.strip() == password.strip())]
-    return user_match.iloc[0]['Name'] if not user_match.empty else None
+    
+    if not user_match.empty:
+        row = user_match.iloc[0]
+        # Parse permissions
+        perms = row.get("Permissions", "")
+        perm_list = [p.strip() for p in perms.split(",") if p.strip()] if perms else []
+        
+        return {
+            'name': row['Name'],
+            'role': row.get('Role', 'User'),
+            'permissions': perm_list
+        }
+    return None
+
+def create_new_user(username, password, name, role, permissions):
+    ws = get_worksheet(SHEET_NAME, "Credentials")
+    if not ws: return False
+    
+    # Check if user exists
+    cell = ws.find(username)
+    if cell: return False # User already exists
+    
+    # Format permissions
+    perm_str = ",".join(permissions)
+    
+    # Append
+    # Assuming columns order: Username, Password, Name, Role, Permissions
+    # If header order is different, this needs to be smarter, but for simplicity assuming append to bottom
+    ws.append_row([username, password, name, role, perm_str])
+    return True
 
 # --- MAIN APP ---
 def main():
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
         st.session_state.user_name = ""
+        st.session_state.user_role = ""
+        st.session_state.user_perms = []
 
     if not st.session_state.logged_in:
         c1, c2, c3 = st.columns([1, 3, 1])
@@ -363,32 +401,45 @@ def main():
             st.write("") 
             st.write("") 
             c_logo, c_form = st.columns([1, 1.5], gap="large")
-            
             with c_logo:
                 st.write("")
                 st.write("")
-                if os.path.exists(LOGO_FILENAME):
-                    st.image(LOGO_FILENAME, use_container_width=True)
-            
+                render_centered_logo(LOGO_FILENAME, 350)
             with c_form:
                 st.markdown("## 🔒 System Login")
                 with st.form("login_form"):
                     user = st.text_input("Username")
                     pwd = st.text_input("Password", type="password")
                     if st.form_submit_button("Login"):
-                        name = check_login(user, pwd)
-                        if name:
+                        user_data = check_login(user, pwd)
+                        if user_data:
                             st.session_state.logged_in = True
-                            st.session_state.user_name = name
+                            st.session_state.user_name = user_data['name']
+                            st.session_state.user_role = user_data['role']
+                            st.session_state.user_perms = user_data['permissions']
                             st.rerun()
                         else: st.error("Invalid Credentials")
         return
 
+    # --- SIDEBAR ---
     with st.sidebar:
         render_centered_logo(LOGO_FILENAME, 120)
         st.markdown("---")
         
-        menu = st.sidebar.radio("Go to:", ["Dashboard", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "IMPORT/EXPORT DB"])
+        # --- ROLE BASED NAVIGATION ---
+        if st.session_state.user_role == "Admin":
+            # Admins get everything + User Manager
+            available_options = ALL_SYSTEM_TABS + ["👤 User Manager"]
+        else:
+            # Users get only what is in their permissions list
+            # Filter ALL_SYSTEM_TABS to ensure order and validity
+            available_options = [tab for tab in ALL_SYSTEM_TABS if tab in st.session_state.user_perms]
+            
+            # Fallback if no permissions assigned
+            if not available_options:
+                available_options = ["Dashboard"] 
+
+        menu = st.sidebar.radio("Go to:", available_options)
         
         st.markdown("---")
         if st.button("🔄 Refresh Data"): 
@@ -402,19 +453,23 @@ def main():
         st.markdown("### 📊 Database Stats")
         stats_placeholder = st.empty()
 
+    # --- HEADER ---
     c_title, c_user = st.columns([3, 1])
     with c_title:
         st.title("🏭 PMS (Cloud)")
     with c_user:
-        st.success(f"👤 **{st.session_state.user_name}**")
+        role_badge = "👑 Admin" if st.session_state.user_role == "Admin" else "👤 User"
+        st.success(f"{role_badge}: **{st.session_state.user_name}**")
         
     st.markdown("---")
 
+    # --- DATA LOADING ---
     try:
         prod_df = load_data("Products")
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
         
+        # Fallback empty structures
         if prod_df.empty or "S/N" not in prod_df.columns:
             prod_df = pd.DataFrame(columns=["S/N", "End User", "Product Name", "Model", "Renewal Date", "Industry Category", "Installation Date", "Activation Date", "Validity (Months)", "Channel Partner", "Device UID", "Connectivity (2G/4G)", "Cable Length", "SIM Number", "SIM Provider"])
         if client_df.empty or "Client Name" not in client_df.columns:
@@ -431,8 +486,9 @@ def main():
         st.error("Connection Error. Data could not be loaded.")
         return
 
-    BASE_PRODUCT_LIST = ["DWLR", "FM", "OCFM", "ARG", "LM", "LC", "Custom"]
-
+    # ==========================
+    # 1. DASHBOARD
+    # ==========================
     if menu == "Dashboard":
         st.subheader("📊 Analytics Overview")
         if not prod_df.empty:
@@ -467,6 +523,9 @@ def main():
             with t2: st.dataframe(prod_df[prod_df['Status_Calc']=="Expired"], use_container_width=True)
         else: st.info("Database empty.")
 
+    # ==========================
+    # 2. SIM MANAGER
+    # ==========================
     elif menu == "SIM Manager":
         st.subheader("📶 SIM Inventory")
         with st.form("add_sim"):
@@ -477,6 +536,9 @@ def main():
                 elif append_to_sheet("Sims", {"SIM Number": s_num, "Provider": s_prov, "Status": "Available"}): st.success("Added"); st.rerun()
         st.dataframe(sim_df, use_container_width=True)
 
+    # ==========================
+    # 3. NEW DISPATCH
+    # ==========================
     elif menu == "New Dispatch Entry":
         st.subheader("📝 New Dispatch")
         st.markdown("### 🛠️ Device & Network")
@@ -555,6 +617,9 @@ def main():
                         else: append_to_sheet("Sims", {"SIM Number": final_sim_num, "Provider": final_sim_prov, "Status": "Used", "Used In S/N": sn})
                     st.success("✅ Dispatch Saved Successfully!"); st.balloons(); st.rerun()
 
+    # ==========================
+    # 4. SUBSCRIPTION MANAGER
+    # ==========================
     elif menu == "Subscription Manager":
         st.subheader("🔄 Subscription & Quotation Manager")
         if not prod_df.empty and 'Renewal Date' in prod_df.columns:
@@ -651,18 +716,22 @@ def main():
                                 st.success(f"Updated {cnt} devices!"); st.rerun()
         else: st.info("No product data available.")
 
+    # ==========================
+    # 5. INSTALLATION LIST
+    # ==========================
     elif menu == "Installation List":
         st.subheader("🔎 Installation Repository")
         search = st.text_input("Search")
         if search: st.dataframe(prod_df[prod_df.astype(str).apply(lambda x: x.str.contains(search, case=False)).any(axis=1)], use_container_width=True)
         else: st.dataframe(prod_df, use_container_width=True)
 
+    # ==========================
+    # 6. CLIENT MASTER
+    # ==========================
     elif menu == "Client Master":
         st.subheader("👥 Client Master")
         
-        # --- NEW: CLIENT SEARCH ---
         search_client = st.text_input("🔍 Search Clients", placeholder="Type Name, Email, or Phone...")
-        
         if search_client:
             mask = client_df.astype(str).apply(lambda x: x.str.contains(search_client, case=False)).any(axis=1)
             st.dataframe(client_df[mask], use_container_width=True)
@@ -683,6 +752,9 @@ def main():
                         if update_client_details(c_edit, {"Client Name": nm, "Email": em, "Phone Number": ph, "Address": ad}):
                             st.success("Updated!"); st.rerun()
 
+    # ==========================
+    # 7. CHANNEL PARTNER ANALYTICS
+    # ==========================
     elif menu == "Channel Partner Analytics":
         st.subheader("🤝 Partner Performance")
         if not prod_df.empty and "Channel Partner" in prod_df.columns:
@@ -710,6 +782,9 @@ def main():
                 st.dataframe(specific, use_container_width=True)
         else: st.info("No Partner Data")
 
+    # ==========================
+    # 8. IMPORT/EXPORT
+    # ==========================
     elif menu == "IMPORT/EXPORT DB":
         st.subheader("💾 Backup")
         all_data = {"Products": prod_df, "Clients": client_df, "Sims": sim_df}
@@ -727,6 +802,42 @@ def main():
                         if bulk_append_to_sheet("Products", new_data):
                             st.success(f"✅ Uploaded {len(new_data)} rows!"); st.rerun()
             except Exception as e: st.error(f"Error reading file: {e}")
+
+    # ==========================
+    # 9. USER MANAGER (ADMIN ONLY)
+    # ==========================
+    elif menu == "👤 User Manager" and st.session_state.user_role == "Admin":
+        st.subheader("👤 User Management System")
+        
+        # 1. List Users
+        ws_creds = get_worksheet(SHEET_NAME, "Credentials")
+        if ws_creds:
+            data = ws_creds.get_all_records()
+            st.dataframe(pd.DataFrame(data), use_container_width=True)
+        
+        st.divider()
+        
+        # 2. Add New User
+        st.markdown("### ➕ Create New User")
+        with st.form("new_user_form"):
+            col_u1, col_u2 = st.columns(2)
+            nu_user = col_u1.text_input("Username")
+            nu_pass = col_u2.text_input("Password", type="password")
+            nu_name = col_u1.text_input("Full Name")
+            nu_role = col_u2.selectbox("Role", ["User", "Admin"])
+            
+            st.markdown("**Select Allowed Tabs (For Normal Users):**")
+            nu_perms = st.multiselect("Permissions", ALL_SYSTEM_TABS, default=["Dashboard"])
+            
+            if st.form_submit_button("Create User"):
+                if not nu_user or not nu_pass:
+                    st.error("Username and Password are required.")
+                else:
+                    if create_new_user(nu_user, nu_pass, nu_name, nu_role, nu_perms):
+                        st.success(f"User {nu_user} created successfully!")
+                        st.rerun()
+                    else:
+                        st.error("User creation failed. Username might already exist.")
 
 if __name__ == "__main__":
     main()
