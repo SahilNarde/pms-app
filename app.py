@@ -14,6 +14,7 @@ from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
+from zoneinfo import ZoneInfo  # --- NEW IMPORT FOR IST TIME ---
 
 # --- PDF LIBRARIES ---
 from reportlab.lib.pagesizes import letter
@@ -53,7 +54,7 @@ st.markdown(
     """
     <style>
         [data-testid="stSidebar"] .block-container { padding-top: 1rem; padding-bottom: 1rem; }
-        div[data-testid="column"] { align-items: start; }
+        div[data-testid="column"] { align-items: center; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -205,12 +206,15 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     buffer.seek(0)
     return buffer
 
-# --- EMAIL LOGGING ---
+# --- EMAIL LOGGING (FIXED: IST TIME) ---
 def log_email(to_email, subject, email_type="Single"):
     try:
         ws = get_worksheet(SHEET_NAME, "Email Logs")
         if ws:
-            now = datetime.now()
+            # Set timezone to Asia/Kolkata
+            ist = ZoneInfo("Asia/Kolkata")
+            now = datetime.now(ist)
+            
             ws.append_row([
                 str(now.date()),
                 now.strftime("%H:%M:%S"),
@@ -546,7 +550,6 @@ def main():
         st.markdown("### 🛠️ Device & Network")
         c1, c2, c3, c4 = st.columns(4)
         
-        # ROW 1
         with c1:
             sn = st.text_input("Product S/N (Required)", key="sn_in")
             oem = st.text_input("OEM S/N", key="oem_in")
@@ -557,7 +560,6 @@ def main():
             conn = st.selectbox("Connectivity", ["4G", "2G", "NB-IoT", "WiFi", "LoRaWAN"], key="conn_in")
             cable = st.text_input("Cable Length", key="cable_in")
         
-        # SIM CARD SECTION (Fixed: No illegal nesting)
         with c4:
             uid = st.text_input("Device UID", key="uid_in")
             avail_sims = get_clean_list(sim_df[sim_df["Status"] == "Available"], "SIM Number")
@@ -577,7 +579,6 @@ def main():
         st.markdown("### 👥 Client & Partner")
         col_p, col_c, col_i, col_d = st.columns(4)
         
-        # PARTNER
         with col_p:
             p_opts = ["Select..."] + get_clean_list(prod_df, "Channel Partner") + ["➕ Create..."]
             p_sel = st.selectbox("Channel Partner", p_opts, key="p_sel")
@@ -587,7 +588,6 @@ def main():
             elif p_sel == "Select...":
                 partner = ""
 
-        # CLIENT
         with col_c:
             c_opts = ["Select..."] + get_clean_list(client_df, "Client Name") + ["➕ Create..."]
             c_sel = st.selectbox("Client", c_opts, key="c_sel")
@@ -597,7 +597,6 @@ def main():
             elif c_sel == "Select...":
                 client = ""
 
-        # INDUSTRY
         with col_i:
             i_opts = ["Select..."] + get_clean_list(prod_df, "Industry Category") + ["➕ Create..."]
             i_sel = st.selectbox("Industry", i_opts, key="i_sel")
@@ -607,7 +606,6 @@ def main():
             elif i_sel == "Select...":
                 industry = ""
 
-        # DATES
         with col_d:
             install_d = st.date_input("Installation Date", key="d_inst")
             valid = st.number_input("Validity", 1, 60, 12, key="d_valid")
@@ -616,7 +614,7 @@ def main():
         st.markdown("---")
         if st.button("💾 Save Dispatch Entry", type="primary", use_container_width=True):
             if not sn or not client:
-                st.error("S/N and Client Required!")
+                st.error("S/N and Client are required!")
             elif sn in prod_df["S/N"].values:
                 st.error("S/N Exists!")
             else:
@@ -633,7 +631,7 @@ def main():
                     if sim_man:
                         if sim_man in sim_df["SIM Number"].values: update_sim_status(sim_man, "Used", sn)
                         else: append_to_sheet("Sims", {"SIM Number": sim_man, "Provider": sim_prov, "Status": "Used", "Used In S/N": sn})
-                    st.success("Saved!"); st.rerun()
+                    st.success("✅ Dispatch Saved Successfully!"); st.balloons(); st.rerun()
 
     elif menu == "Subscription Manager":
         st.subheader("🔄 Subscription & Quotation Manager")
@@ -645,7 +643,6 @@ def main():
             else:
                 tab_s, tab_b = st.tabs(["📱 Individual", "🏢 Bulk"])
                 
-                # --- INDIVIDUAL ---
                 with tab_s:
                     exp_df['Label'] = exp_df['S/N'] + " | " + exp_df['End User']
                     sel_lbl = st.selectbox("Select Device", exp_df['Label'].tolist())
@@ -654,7 +651,6 @@ def main():
                     
                     st.info(f"Product: {row['Product Name']} | Expires: {row['Renewal Date']}")
                     
-                    # QUOTE PERMISSION CHECK
                     if can_generate_quote:
                         with st.expander("📄 Generate Quote"):
                             with st.form("sq"):
@@ -679,7 +675,6 @@ def main():
                                     if send_email_with_attachment(to, sub, body, pdf, "Quote.pdf", email_type="Single"):
                                         st.success("Sent!"); del st.session_state['sq_data']
                     
-                    # RENEWAL PERMISSION CHECK
                     st.write("---")
                     st.markdown("### 📅 Update Subscription")
                     with st.form("sr"):
@@ -695,7 +690,6 @@ def main():
                                 if submit_renewal_request([sel_sn], new_st, dur, st.session_state.user_name):
                                     st.success("Request Submitted to Admin!"); st.rerun()
 
-                # --- BULK ---
                 with tab_b:
                     cl_list = get_clean_list(exp_df, "End User")
                     sel_cl = st.selectbox("Select Client", cl_list)
@@ -814,7 +808,6 @@ def main():
         else:
             st.info("No email logs found.")
 
-    # --- ADMIN EXCLUSIVE TABS ---
     elif menu == "🔔 Approvals" and st.session_state.user_role == "Admin":
         st.subheader("🔔 Pending Renewal Requests")
         if not req_df.empty:
