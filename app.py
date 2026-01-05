@@ -98,9 +98,9 @@ def get_worksheet(sheet_name, tab_name):
             if tab_name == "Renewal Requests":
                 return sh.add_worksheet(title="Renewal Requests", rows=100, cols=10)
             elif tab_name == "Email Logs":
-                # UPDATED: Added 'Client Name' to headers
+                # UPDATED: Added 'Product S/N' column
                 ws = sh.add_worksheet(title="Email Logs", rows=100, cols=10)
-                ws.append_row(["Date", "Time", "Sender", "To Email", "Client Name", "Subject", "Type", "Status"])
+                ws.append_row(["Date", "Time", "Sender", "Recipient", "Client Name", "Product S/N", "Subject", "Type", "Status"])
                 return ws
             return None
     except Exception as e:
@@ -223,19 +223,20 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     return buffer
 
 # --- EMAIL LOGGING ---
-def log_email(to_email, client_name, subject, email_type="Single"):
+def log_email(to_email, client_name, product_sn, subject, email_type="Single"):
     try:
         ws = get_worksheet(SHEET_NAME, "Email Logs")
         if ws:
             ist = ZoneInfo("Asia/Kolkata")
             now = datetime.now(ist)
-            # Date, Time, Sender, To Email, Client Name, Subject, Type, Status
+            # Date, Time, Sender, Recipient, Client Name, Product S/N, Subject, Type, Status
             ws.append_row([
                 str(now.date()),
                 now.strftime("%H:%M:%S"),
                 st.session_state.get('user_name', 'System'),
                 to_email,
                 client_name,
+                product_sn,
                 subject,
                 email_type,
                 "Sent"
@@ -245,7 +246,6 @@ def log_email(to_email, client_name, subject, email_type="Single"):
 
 # --- EMAIL FUNCTION ---
 def format_email_body_html(text):
-    """Converts plain text to HTML with specific formatting."""
     html = text.replace("\n", "<br>")
     
     target_text = "*NOTE: Please do not reply to this email. As this mail is system generated. For communication mail on"
@@ -256,7 +256,7 @@ def format_email_body_html(text):
     
     return f"<html><body style='font-family: Arial, sans-serif;'>{html}</body></html>"
 
-def send_email_with_attachment(to_email, client_name, subject, body, pdf_buffer, filename="Quotation.pdf", email_type="Single"):
+def send_email_with_attachment(to_email, client_name, product_sn, subject, body, pdf_buffer, filename="Quotation.pdf", email_type="Single"):
     try:
         email_conf = st.secrets["email"]
         msg = MIMEMultipart()
@@ -278,8 +278,8 @@ def send_email_with_attachment(to_email, client_name, subject, body, pdf_buffer,
         server.sendmail(email_conf["sender_email"], to_email, msg.as_string())
         server.quit()
         
-        # Log with client name
-        log_email(to_email, client_name, subject, email_type)
+        # Log email
+        log_email(to_email, client_name, product_sn, subject, email_type)
         return True
     except Exception as e:
         st.error(f"Email Error: {e}")
@@ -692,7 +692,7 @@ def main():
                                 body = st.text_area("Msg", value=DEFAULT_EMAIL_BODY, height=350, key="se_msg")
                                 if st.button("Send", key="se_btn"):
                                     pdf = create_quotation_pdf(q['c'], q['d'], q['r'], q['v'])
-                                    if send_email_with_attachment(to, q['c'].get('Client Name', 'Unknown'), sub, body, pdf, "Quote.pdf", email_type="Single"):
+                                    if send_email_with_attachment(to, q['c'].get('Client Name', 'Unknown'), sel_sn, sub, body, pdf, "Quote.pdf", email_type="Single"):
                                         st.success("Sent!"); del st.session_state['sq_data']
                     
                     # RENEWAL PERMISSION CHECK
@@ -741,7 +741,8 @@ def main():
                                 body = st.text_area("Msg", value=DEFAULT_EMAIL_BODY, height=350, key="b_msg")
                                 if st.button("Send Bulk", key="b_btn"):
                                     pdf = create_quotation_pdf(q['c'], q['d'], q['r'], q['v'])
-                                    if send_email_with_attachment(to, q['c'].get('Client Name', 'Unknown'), sub, body, pdf, "Quote.pdf", email_type="Bulk"):
+                                    sn_str = ", ".join([d['sn'] for d in q['d']])
+                                    if send_email_with_attachment(to, q['c'].get('Client Name', 'Unknown'), sn_str, sub, body, pdf, "Quote.pdf", email_type="Bulk"):
                                         st.success("Sent!"); del st.session_state['bq_data']
 
                     st.write("---")
