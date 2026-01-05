@@ -40,6 +40,7 @@ To ensure seamless service continuity, we recommend completing the renewal proce
 Thank you for your continued partnership.
 
 *NOTE: Please do not reply to this email. As this mail is system generated. For communication mail on sales@orcatech.co.in
+
 Warm regards,
 ORCATECH ENTERPRISES"""
 
@@ -97,8 +98,9 @@ def get_worksheet(sheet_name, tab_name):
             if tab_name == "Renewal Requests":
                 return sh.add_worksheet(title="Renewal Requests", rows=100, cols=10)
             elif tab_name == "Email Logs":
+                # UPDATED: Added 'Client Name' to headers
                 ws = sh.add_worksheet(title="Email Logs", rows=100, cols=10)
-                ws.append_row(["Date", "Time", "Sender", "Recipient", "Subject", "Type", "Status"])
+                ws.append_row(["Date", "Time", "Sender", "To Email", "Client Name", "Subject", "Type", "Status"])
                 return ws
             return None
     except Exception as e:
@@ -221,17 +223,19 @@ def create_quotation_pdf(client_name, device_list, rate_per_device, valid_until)
     return buffer
 
 # --- EMAIL LOGGING ---
-def log_email(to_email, subject, email_type="Single"):
+def log_email(to_email, client_name, subject, email_type="Single"):
     try:
         ws = get_worksheet(SHEET_NAME, "Email Logs")
         if ws:
             ist = ZoneInfo("Asia/Kolkata")
             now = datetime.now(ist)
+            # Date, Time, Sender, To Email, Client Name, Subject, Type, Status
             ws.append_row([
                 str(now.date()),
                 now.strftime("%H:%M:%S"),
                 st.session_state.get('user_name', 'System'),
                 to_email,
+                client_name,
                 subject,
                 email_type,
                 "Sent"
@@ -241,19 +245,18 @@ def log_email(to_email, subject, email_type="Single"):
 
 # --- EMAIL FUNCTION ---
 def format_email_body_html(text):
-    """Converts plain text to HTML with specific formatting for Orcatech."""
-    # Convert newlines to HTML line breaks
+    """Converts plain text to HTML with specific formatting."""
     html = text.replace("\n", "<br>")
     
-    # Format *NOTE: (Bold Red)
-    html = html.replace("*NOTE:", "<strong style='color:red;'>*NOTE:</strong>")
+    target_text = "*NOTE: Please do not reply to this email. As this mail is system generated. For communication mail on"
+    if target_text in html:
+        html = html.replace(target_text, f"<strong style='color:red;'>{target_text}</strong>")
     
-    # Format email (Blue Underline)
     html = html.replace("sales@orcatech.co.in", "<a href='mailto:sales@orcatech.co.in' style='color:blue; text-decoration:underline;'>sales@orcatech.co.in</a>")
     
     return f"<html><body style='font-family: Arial, sans-serif;'>{html}</body></html>"
 
-def send_email_with_attachment(to_email, subject, body, pdf_buffer, filename="Quotation.pdf", email_type="Single"):
+def send_email_with_attachment(to_email, client_name, subject, body, pdf_buffer, filename="Quotation.pdf", email_type="Single"):
     try:
         email_conf = st.secrets["email"]
         msg = MIMEMultipart()
@@ -261,10 +264,7 @@ def send_email_with_attachment(to_email, subject, body, pdf_buffer, filename="Qu
         msg['To'] = to_email
         msg['Subject'] = subject
         
-        # Convert plain text body to formatted HTML
         html_body = format_email_body_html(body)
-        
-        # Attach HTML body
         msg.attach(MIMEText(html_body, 'html'))
         
         if pdf_buffer:
@@ -277,7 +277,9 @@ def send_email_with_attachment(to_email, subject, body, pdf_buffer, filename="Qu
         server.login(email_conf["sender_email"], email_conf["app_password"])
         server.sendmail(email_conf["sender_email"], to_email, msg.as_string())
         server.quit()
-        log_email(to_email, subject, email_type)
+        
+        # Log with client name
+        log_email(to_email, client_name, subject, email_type)
         return True
     except Exception as e:
         st.error(f"Email Error: {e}")
@@ -577,8 +579,7 @@ def main():
 
     elif menu == "New Dispatch Entry":
         st.subheader("📝 New Dispatch")
-        # --- FIXED LAYOUT: No nested columns in conditional blocks ---
-        
+        # --- FIXED LAYOUT ---
         st.markdown("### 🛠️ Device & Network")
         c1, c2, c3, c4 = st.columns(4)
         
@@ -591,13 +592,11 @@ def main():
         with c3:
             conn = st.selectbox("Connectivity", ["4G", "2G", "NB-IoT", "WiFi", "LoRaWAN"], key="conn_in")
             cable = st.text_input("Cable Length", key="cable_in")
-        
         with c4:
             uid = st.text_input("Device UID", key="uid_in")
             avail_sims = get_clean_list(sim_df[sim_df["Status"] == "Available"], "SIM Number")
             sim_opts = ["None"] + avail_sims + ["➕ Add New..."]
             sim_sel = st.selectbox("SIM Card", sim_opts, key="sim_sel")
-            
             sim_man = ""
             sim_prov = "VI"
             if sim_sel == "➕ Add New...":
@@ -613,29 +612,17 @@ def main():
         with col_p:
             p_opts = ["Select..."] + get_clean_list(prod_df, "Channel Partner") + ["➕ Create..."]
             p_sel = st.selectbox("Channel Partner", p_opts, key="p_sel")
-            partner = p_sel
-            if p_sel == "➕ Create...":
-                partner = st.text_input("New Partner Name", key="p_new")
-            elif p_sel == "Select...":
-                partner = ""
+            partner = st.text_input("New Partner Name", key="p_new") if p_sel == "➕ Create..." else (p_sel if p_sel != "Select..." else "")
 
         with col_c:
             c_opts = ["Select..."] + get_clean_list(client_df, "Client Name") + ["➕ Create..."]
             c_sel = st.selectbox("Client", c_opts, key="c_sel")
-            client = c_sel
-            if c_sel == "➕ Create...":
-                client = st.text_input("New Client Name", key="c_new")
-            elif c_sel == "Select...":
-                client = ""
+            client = st.text_input("New Client Name", key="c_new") if c_sel == "➕ Create..." else (c_sel if c_sel != "Select..." else "")
 
         with col_i:
             i_opts = ["Select..."] + get_clean_list(prod_df, "Industry Category") + ["➕ Create..."]
             i_sel = st.selectbox("Industry", i_opts, key="i_sel")
-            industry = i_sel
-            if i_sel == "➕ Create...":
-                industry = st.text_input("New Industry", key="i_new")
-            elif i_sel == "Select...":
-                industry = ""
+            industry = st.text_input("New Industry", key="i_new") if i_sel == "➕ Create..." else (i_sel if i_sel != "Select..." else "")
 
         with col_d:
             install_d = st.date_input("Installation Date", key="d_inst")
@@ -645,7 +632,7 @@ def main():
         st.markdown("---")
         if st.button("💾 Save Dispatch Entry", type="primary", use_container_width=True):
             if not sn or not client:
-                st.error("S/N and Client are required!")
+                st.error("S/N and Client Required!")
             elif sn in prod_df["S/N"].values:
                 st.error("S/N Exists!")
             else:
@@ -702,10 +689,10 @@ def main():
                                 q = st.session_state['sq_data']
                                 to = st.text_input("To", q['c'].get('Email',''), key="se_to")
                                 sub = st.text_input("Subj", value=DEFAULT_SUBJECT, key="se_sub")
-                                body = st.text_area("Msg", value=DEFAULT_EMAIL_BODY, height=200, key="se_msg")
+                                body = st.text_area("Msg", value=DEFAULT_EMAIL_BODY, height=350, key="se_msg")
                                 if st.button("Send", key="se_btn"):
                                     pdf = create_quotation_pdf(q['c'], q['d'], q['r'], q['v'])
-                                    if send_email_with_attachment(to, sub, body, pdf, "Quote.pdf", email_type="Single"):
+                                    if send_email_with_attachment(to, q['c'].get('Client Name', 'Unknown'), sub, body, pdf, "Quote.pdf", email_type="Single"):
                                         st.success("Sent!"); del st.session_state['sq_data']
                     
                     # RENEWAL PERMISSION CHECK
@@ -751,10 +738,10 @@ def main():
                                 q = st.session_state['bq_data']
                                 to = st.text_input("To", q['c'].get('Email',''), key="b_to")
                                 sub = st.text_input("Subj", value=DEFAULT_SUBJECT, key="b_sub")
-                                body = st.text_area("Msg", value=DEFAULT_EMAIL_BODY, height=200, key="b_msg")
+                                body = st.text_area("Msg", value=DEFAULT_EMAIL_BODY, height=350, key="b_msg")
                                 if st.button("Send Bulk", key="b_btn"):
                                     pdf = create_quotation_pdf(q['c'], q['d'], q['r'], q['v'])
-                                    if send_email_with_attachment(to, sub, body, pdf, "Quote.pdf", email_type="Bulk"):
+                                    if send_email_with_attachment(to, q['c'].get('Client Name', 'Unknown'), sub, body, pdf, "Quote.pdf", email_type="Bulk"):
                                         st.success("Sent!"); del st.session_state['bq_data']
 
                     st.write("---")
