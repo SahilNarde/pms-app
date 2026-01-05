@@ -506,7 +506,7 @@ def main():
         stats_placeholder = st.empty()
 
     c_title, c_user = st.columns([3, 1])
-    with c_title: st.title("🏭 PMS (Cloud)")
+    with c_title: st.title("🏭 Orcatech - Product Management System")
     with c_user:
         badge = "👑 Admin" if st.session_state.user_role == "Admin" else "👤 User"
         st.success(f"{badge}: **{st.session_state.user_name}**")
@@ -870,3 +870,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
