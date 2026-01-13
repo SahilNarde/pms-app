@@ -58,7 +58,8 @@ COMPANY_INFO = {
 }
 
 # --- PERMISSION CONSTANTS ---
-NAV_TABS = ["Dashboard", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "Email Logs", "IMPORT/EXPORT DB"]
+# Added "Inventory Management" to tabs
+NAV_TABS = ["Dashboard", "Inventory Management", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "Email Logs", "IMPORT/EXPORT DB"]
 FUNC_PERMS = ["ACCESS: Generate Quote", "ACCESS: Direct Renewal"]
 ALL_OPTS = NAV_TABS + FUNC_PERMS
 
@@ -70,6 +71,14 @@ st.markdown(
     <style>
         [data-testid="stSidebar"] .block-container { padding-top: 1rem; padding-bottom: 1rem; }
         div[data-testid="column"] { align-items: center; }
+        /* Inventory Card Style */
+        .inv-card {
+            background-color: #f0f2f6;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            border: 1px solid #d1d5db;
+        }
     </style>
     """,
     unsafe_allow_html=True,
@@ -95,12 +104,20 @@ def get_worksheet(sheet_name, tab_name):
         try:
             return sh.worksheet(tab_name)
         except gspread.WorksheetNotFound:
+            # Auto-create missing tabs
             if tab_name == "Renewal Requests":
                 return sh.add_worksheet(title="Renewal Requests", rows=100, cols=10)
             elif tab_name == "Email Logs":
-                # UPDATED: Added 'Product S/N' column
                 ws = sh.add_worksheet(title="Email Logs", rows=100, cols=10)
                 ws.append_row(["Date", "Time", "Sender", "Recipient", "Client Name", "Product S/N", "Subject", "Type", "Status"])
+                return ws
+            elif tab_name == "Inventory":
+                ws = sh.add_worksheet(title="Inventory", rows=100, cols=10)
+                ws.append_row(["Product Name", "Model", "Current Stock", "Min Level", "Last Updated"])
+                return ws
+            elif tab_name == "Inventory Logs":
+                ws = sh.add_worksheet(title="Inventory Logs", rows=100, cols=10)
+                ws.append_row(["Date", "Time", "User", "Action", "Product", "Model", "Quantity", "Note"])
                 return ws
             return None
     except Exception as e:
@@ -244,16 +261,72 @@ def log_email(to_email, client_name, product_sn, subject, email_type="Single"):
     except Exception:
         pass
 
+# --- INVENTORY FUNCTIONS ---
+def update_inventory(product, model, qty, action, note=""):
+    """
+    Updates the Inventory Sheet and Logs the transaction.
+    action: "Stock In" or "Stock Out" or "Correction"
+    """
+    ws_inv = get_worksheet(SHEET_NAME, "Inventory")
+    ws_log = get_worksheet(SHEET_NAME, "Inventory Logs")
+    if not ws_inv or not ws_log: return False
+    
+    try:
+        # 1. Update Master Stock
+        data = ws_inv.get_all_values()
+        headers = data[0]
+        df = pd.DataFrame(data[1:], columns=headers)
+        
+        # Clean inputs
+        product = product.strip()
+        model = model.strip()
+        
+        # Check if product exists
+        mask = (df["Product Name"] == product) & (df["Model"] == model)
+        
+        if df[mask].empty and action == "Stock In":
+            # New Item
+            ws_inv.append_row([product, model, str(qty), "10", str(date.today())])
+        elif not df[mask].empty:
+            # Update Existing
+            row_idx = df.index[mask][0] + 2 # +2 for 1-based index and header
+            current_qty = int(df.loc[mask, "Current Stock"].values[0])
+            
+            if action == "Stock In":
+                new_qty = current_qty + int(qty)
+            elif action in ["Stock Out", "Correction"]:
+                new_qty = current_qty - int(qty)
+                
+            ws_inv.update_cell(row_idx, headers.index("Current Stock")+1, str(new_qty))
+            ws_inv.update_cell(row_idx, headers.index("Last Updated")+1, str(date.today()))
+        
+        # 2. Log Transaction
+        ist = ZoneInfo("Asia/Kolkata")
+        now = datetime.now(ist)
+        ws_log.append_row([
+            str(now.date()),
+            now.strftime("%H:%M:%S"),
+            st.session_state.get('user_name', 'System'),
+            action,
+            product,
+            model,
+            str(qty),
+            note
+        ])
+        
+        load_data.clear() # clear cache
+        return True
+    except Exception as e:
+        st.error(f"Inventory Error: {e}")
+        return False
+
 # --- EMAIL FUNCTION ---
 def format_email_body_html(text):
     html = text.replace("\n", "<br>")
-    
     target_text = "*NOTE: Please do not reply to this email. As this mail is system generated. For communication mail on"
     if target_text in html:
         html = html.replace(target_text, f"<strong style='color:red;'>{target_text}</strong>")
-    
     html = html.replace("sales@orcatech.co.in", "<a href='mailto:sales@orcatech.co.in' style='color:blue; text-decoration:underline;'>sales@orcatech.co.in</a>")
-    
     return f"<html><body style='font-family: Arial, sans-serif;'>{html}</body></html>"
 
 def send_email_with_attachment(to_email, client_name, product_sn, subject, body, pdf_buffer, filename="Quotation.pdf", email_type="Single"):
@@ -263,22 +336,17 @@ def send_email_with_attachment(to_email, client_name, product_sn, subject, body,
         msg['From'] = email_conf["sender_email"]
         msg['To'] = to_email
         msg['Subject'] = subject
-        
         html_body = format_email_body_html(body)
         msg.attach(MIMEText(html_body, 'html'))
-        
         if pdf_buffer:
             part = MIMEApplication(pdf_buffer.read(), Name=filename)
             part['Content-Disposition'] = f'attachment; filename="{filename}"'
             msg.attach(part)
-            
         server = smtplib.SMTP(email_conf["smtp_server"], email_conf["smtp_port"])
         server.starttls()
         server.login(email_conf["sender_email"], email_conf["app_password"])
         server.sendmail(email_conf["sender_email"], to_email, msg.as_string())
         server.quit()
-        
-        # Log email
         log_email(to_email, client_name, product_sn, subject, email_type)
         return True
     except Exception as e:
@@ -516,6 +584,7 @@ def main():
         prod_df = load_data("Products")
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
+        inv_df = load_data("Inventory")
         req_df = load_data("Renewal Requests") if st.session_state.user_role == "Admin" else pd.DataFrame()
         email_df = load_data("Email Logs")
 
@@ -525,6 +594,8 @@ def main():
             client_df = pd.DataFrame(columns=["Client Name", "Email", "Phone Number", "Contact Person", "Address"])
         if sim_df.empty or "SIM Number" not in sim_df.columns:
             sim_df = pd.DataFrame(columns=["SIM Number", "Status", "Provider", "Plan Details", "Entry Date", "Used In S/N"])
+        if inv_df.empty or "Product Name" not in inv_df.columns:
+            inv_df = pd.DataFrame(columns=["Product Name", "Model", "Current Stock", "Min Level", "Last Updated"])
 
         with stats_placeholder.container():
             st.caption(f"📦 Products: {len(prod_df)}")
@@ -566,6 +637,75 @@ def main():
             t1, t2 = st.tabs(["⏳ Expiring Soon", "❌ Expired"])
             with t1: st.dataframe(prod_df[prod_df['Status_Calc']=="Expiring Soon"], use_container_width=True)
             with t2: st.dataframe(prod_df[prod_df['Status_Calc']=="Expired"], use_container_width=True)
+
+    elif menu == "Inventory Management":
+        st.subheader("📦 Professional Inventory Management")
+        
+        # TABS
+        tab_view, tab_in, tab_log = st.tabs(["📊 Stock Overview", "📥 Stock In / Adjust", "📜 Transaction Logs"])
+        
+        with tab_view:
+            # KPIS
+            total_items = pd.to_numeric(inv_df["Current Stock"], errors='coerce').sum()
+            low_stock = inv_df[pd.to_numeric(inv_df["Current Stock"], errors='coerce') < pd.to_numeric(inv_df["Min Level"], errors='coerce')]
+            
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Total Items in Stock", int(total_items))
+            k2.metric("Low Stock Alerts", len(low_stock), delta_color="inverse")
+            k3.metric("Product Types", len(inv_df))
+            st.divider()
+            
+            # MAIN TABLE
+            st.markdown("### 📋 Current Stock Levels")
+            
+            # Color coding logic
+            def color_stock(val):
+                try:
+                    qty = int(val["Current Stock"])
+                    limit = int(val["Min Level"])
+                    if qty <= 0: return ['background-color: #ffcccc'] * len(val)
+                    elif qty < limit: return ['background-color: #fff4cc'] * len(val)
+                    else: return ['background-color: #ccffcc'] * len(val)
+                except: return [''] * len(val)
+
+            st.dataframe(inv_df.style.apply(color_stock, axis=1), use_container_width=True)
+            
+            if not low_stock.empty:
+                st.error(f"⚠️ Low Stock Alert: {', '.join(low_stock['Product Name'].tolist())}")
+
+        with tab_in:
+            st.markdown("### 📥 Add Stock / Procurement")
+            with st.form("stock_in"):
+                c1, c2 = st.columns(2)
+                p_name = c1.selectbox("Product", BASE_PRODUCT_LIST)
+                p_model = c2.text_input("Model")
+                qty = c1.number_input("Quantity", min_value=1, value=10)
+                note = c2.text_input("Source / PO Number")
+                
+                if st.form_submit_button("➕ Add Stock"):
+                    if update_inventory(p_name, p_model, qty, "Stock In", note):
+                        st.success(f"Added {qty} {p_name} to Inventory")
+                        st.rerun()
+            
+            st.divider()
+            st.markdown("### 🛠️ Manual Adjustment (Correction)")
+            with st.expander("Open Correction Form"):
+                with st.form("adj"):
+                    c1, c2 = st.columns(2)
+                    exist_prod = c1.selectbox("Select Product", inv_df["Product Name"].unique())
+                    # Filter models based on product? (Simplified for now)
+                    exist_mod = c2.text_input("Model Name (Exact)")
+                    adj_qty = c1.number_input("Quantity to Remove", min_value=1)
+                    reason = c2.text_input("Reason")
+                    if st.form_submit_button("Update Stock"):
+                        if update_inventory(exist_prod, exist_mod, adj_qty, "Correction", reason):
+                            st.success("Stock Adjusted")
+                            st.rerun()
+
+        with tab_log:
+            st.markdown("### 📜 Movement History")
+            log_df = load_data("Inventory Logs")
+            st.dataframe(log_df, use_container_width=True)
 
     elif menu == "SIM Manager":
         st.subheader("📶 SIM Inventory")
@@ -870,4 +1010,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
