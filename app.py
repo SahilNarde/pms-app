@@ -60,7 +60,8 @@ COMPANY_INFO = {
 # --- PERMISSION CONSTANTS ---
 NAV_TABS = [
     "Dashboard", 
-    "Inventory Manager", # NEW TAB
+    "Inventory Manager", 
+    "Product Recipes (BOM)", 
     "SIM Manager", 
     "New Dispatch Entry", 
     "Subscription Manager", 
@@ -120,6 +121,10 @@ def get_worksheet(sheet_name, tab_name):
             elif tab_name == "Stock_Master":
                 ws = sh.add_worksheet(title="Stock_Master", rows=100, cols=5)
                 ws.append_row(["Item Name", "Category", "Current Stock"])
+                return ws
+            elif tab_name == "BOM_Mapping":
+                ws = sh.add_worksheet(title="BOM_Mapping", rows=1000, cols=3)
+                ws.append_row(["Product Name", "Raw Material Name", "Qty Needed Per Unit"])
                 return ws
             return None
     except Exception as e:
@@ -328,11 +333,23 @@ def append_to_sheet(tab_name, data_dict):
         if not raw_headers:
             ws.append_row(list(data_dict.keys()))
             raw_headers = list(data_dict.keys())
-        ws.append_row([str(data_dict.get(h.strip(), "")) for h in raw_headers])
+        
+        row_data = []
+        for h in raw_headers:
+            val = data_dict.get(h.strip(), "")
+            if isinstance(val, (int, float)):
+                row_data.append(val)
+            else:
+                row_data.append(str(val))
+        
+        ws.append_row(row_data, value_input_option='USER_ENTERED')
+        
         load_data.clear()
         return True
-    except Exception: return False
-
+    except Exception as e: 
+        print(f"Append Error: {e}")
+        return False
+    
 def bulk_append_to_sheet(tab_name, df):
     ws = get_worksheet(SHEET_NAME, tab_name)
     if not ws: return False
@@ -398,7 +415,6 @@ def get_stock_levels():
     stock_dict = {}
     for _, row in df.iterrows():
         try:
-            # Handle possible float/int values in strings
             val = float(row["Current Stock"]) if row["Current Stock"] else 0
             stock_dict[row["Item Name"]] = int(val)
         except:
@@ -410,8 +426,9 @@ def log_transaction(item_name, qty, trans_type, reference, user):
     ist = ZoneInfo("Asia/Kolkata")
     now = datetime.now(ist)
     
+    # FIX: Date format forced to dd-mm-yyyy
     data = {
-        "Date": str(now.date()),
+        "Date": now.strftime("%d-%m-%Y"),
         "Time": now.strftime("%H:%M:%S"),
         "Item Name": item_name,
         "Qty": qty,            
@@ -422,31 +439,19 @@ def log_transaction(item_name, qty, trans_type, reference, user):
     return append_to_sheet("Transactions", data)
 
 def add_stock_item(item_name, category):
-    """
-    Adds a new item to Stock_Master AND inserts the formula.
-    Formula: =SUMIF(Transactions!C:C, A{row}, Transactions!D:D)
-    Assuming Item Name is Col A (1) and Current Stock is Col C (3).
-    """
+    """Adds a new item to Stock_Master AND inserts the formula."""
     ws = get_worksheet(SHEET_NAME, "Stock_Master")
     if not ws: return False
     
-    # Check if item exists
     try:
         if ws.find(item_name):
-            return False # Item exists
+            return False
     except:
-        pass # Item not found, safe to add
+        pass
         
-    # Calculate next row number (1 header + current rows + 1 for new row)
     next_row = len(ws.get_all_values()) + 1
-    
-    # The Formula
-    # Transactions!C:C is Item Name column in Transactions
-    # Transactions!D:D is Qty column in Transactions
     formula = f"=SUMIF(Transactions!C:C, A{next_row}, Transactions!D:D)"
     
-    # Append row with user_entered option to parse formula
-    # [Item Name, Category, Current Stock (Formula)]
     ws.append_row([item_name, category, formula], value_input_option='USER_ENTERED')
     load_data.clear()
     return True
@@ -454,13 +459,14 @@ def add_stock_item(item_name, category):
 # --- RENEWAL LOGIC ---
 def submit_renewal_request(sn_list, new_start, duration, requested_by):
     req_id = str(uuid.uuid4())[:8]
+    # FIX: Date format forced to dd-mm-yyyy for requests
     data = {
         "Request ID": req_id,
         "S/N List": ",".join(sn_list),
-        "New Start Date": str(new_start),
+        "New Start Date": new_start.strftime("%d-%m-%Y"), 
         "Duration": str(duration),
         "Requested By": requested_by,
-        "Request Date": str(date.today()),
+        "Request Date": date.today().strftime("%d-%m-%Y"),
         "Status": "Pending"
     }
     return append_to_sheet("Renewal Requests", data)
@@ -470,7 +476,13 @@ def approve_request(req_id, sn_list_str, new_start, duration):
     new_end = calculate_renewal(new_start, duration)
     success_count = 0
     for sn in sn_list:
-        if update_product_subscription(sn.strip(), str(new_start), duration, str(new_end)):
+        # FIX: Ensure dates passed to update are strings in dd-mm-yyyy
+        if update_product_subscription(
+            sn.strip(), 
+            pd.to_datetime(new_start).strftime("%d-%m-%Y"),
+            duration, 
+            new_end.strftime("%d-%m-%Y")
+        ):
             success_count += 1
             
     ws = get_worksheet(SHEET_NAME, "Renewal Requests")
@@ -500,7 +512,11 @@ def calculate_renewal(activation_date, months):
 
 def check_expiry_status(renewal_date):
     try:
-        days = (pd.to_datetime(renewal_date).date() - datetime.now().date()).days
+        # FIX: dayfirst=True handles dd-mm-yyyy correctly
+        r_date = pd.to_datetime(renewal_date, dayfirst=True, errors='coerce').date()
+        if pd.isna(r_date): return "Unknown"
+        
+        days = (r_date - datetime.now().date()).days
         return "Expired" if days < 0 else ("Expiring Soon" if days <= 30 else "Active")
     except: return "Unknown"
 
@@ -599,14 +615,17 @@ def main():
         email_df = load_data("Email Logs")
         stock_df = load_data("Stock_Master")
         trans_df = load_data("Transactions")
+        # --- NEW: LOAD BOM DATA ---
+        bom_df = load_data("BOM_Mapping")
 
-        # Fallback headers if sheets are empty
         if prod_df.empty or "S/N" not in prod_df.columns:
             prod_df = pd.DataFrame(columns=["S/N", "End User", "Product Name", "Model", "Renewal Date", "Industry Category", "Installation Date", "Activation Date", "Validity (Months)", "Channel Partner", "Device UID", "Connectivity (2G/4G)", "Cable Length", "SIM Number", "SIM Provider"])
         if client_df.empty or "Client Name" not in client_df.columns:
             client_df = pd.DataFrame(columns=["Client Name", "Email", "Phone Number", "Contact Person", "Address"])
         if sim_df.empty or "SIM Number" not in sim_df.columns:
             sim_df = pd.DataFrame(columns=["SIM Number", "Status", "Provider", "Plan Details", "Entry Date", "Used In S/N"])
+        if bom_df.empty or "Product Name" not in bom_df.columns:
+            bom_df = pd.DataFrame(columns=["Product Name", "Raw Material Name", "Qty Needed Per Unit"])
 
         with stats_placeholder.container():
             st.caption(f"📦 Products: {len(prod_df)}")
@@ -640,7 +659,8 @@ def main():
             with c2:
                 df_trend = prod_df.dropna(subset=["Installation Date"])
                 if not df_trend.empty:
-                    df_trend["Installation Date"] = pd.to_datetime(df_trend["Installation Date"], errors='coerce')
+                    # FIX: dayfirst=True here too for robustness
+                    df_trend["Installation Date"] = pd.to_datetime(df_trend["Installation Date"], dayfirst=True, errors='coerce')
                     trend = df_trend.groupby(df_trend["Installation Date"].dt.to_period("M")).size().reset_index(name="Count")
                     trend["Month"] = trend["Installation Date"].astype(str)
                     st.plotly_chart(px.area(trend, x="Month", y="Count", title="Monthly Installations"), use_container_width=True)
@@ -653,10 +673,8 @@ def main():
     elif menu == "Inventory Manager":
         st.subheader("📦 Stock Availability Tracker")
         
-        # 1. LIVE STOCK KPI
         st.markdown("### 📊 Live Stock Levels")
         if not stock_df.empty:
-            # Color logic: Red if < 0 (Backlog), Green if > 0, Gray if 0
             def highlight_stock(val):
                 try:
                     v = int(val)
@@ -664,15 +682,12 @@ def main():
                     elif v > 0: return 'background-color: #ccffcc; color: #006600'
                 except: pass
                 return ''
-            
-            # Show formatted dataframe
             st.dataframe(stock_df.style.map(highlight_stock, subset=['Current Stock']), use_container_width=True)
         else:
             st.info("Stock list is empty. Add items below.")
 
         st.divider()
 
-        # 2. TRANSACTION FORM
         col_trans, col_add = st.columns([1.5, 1])
 
         with col_trans:
@@ -682,38 +697,108 @@ def main():
                 t_item = st.selectbox("Select Item", item_list)
                 t_type = st.selectbox("Type", ["Production (In)", "Purchase (In)", "Return (In)", "Damaged (Out)", "Manual Adjustment"])
                 t_qty = st.number_input("Quantity", min_value=1, value=1)
-                t_ref = st.text_input("Reference / Note", placeholder="e.g. PO-1234")
+                t_ref = st.text_input("Reference / Note", placeholder="e.g. Batch-001, PO-123")
                 
                 if st.form_submit_button("💾 Log Transaction"):
-                    # Calculate + or -
                     final_qty = t_qty if "In" in t_type else -t_qty
+                    
                     if log_transaction(t_item, final_qty, t_type, t_ref, st.session_state.user_name):
-                        st.success(f"Logged: {t_item} ({final_qty})")
+                        msg = f"✅ Logged: {t_item} ({final_qty})"
+                        
+                        # Backflushing Logic
+                        if t_type == "Production (In)":
+                            if not bom_df.empty:
+                                recipe = bom_df[bom_df["Product Name"] == t_item]
+                                if not recipe.empty:
+                                    st.info(f"⚙️ Recipe found for {t_item}. Processing auto-deductions...")
+                                    deduction_log = []
+                                    for _, row in recipe.iterrows():
+                                        raw_mat = row["Raw Material Name"]
+                                        try: qty_per_unit = float(row["Qty Needed Per Unit"])
+                                        except: qty_per_unit = 0
+                                        total_deduction = -(t_qty * qty_per_unit)
+                                        log_transaction(raw_mat, total_deduction, "Used in Production", f"Auto-deducted for {t_qty}x {t_item}", "System")
+                                        deduction_log.append(f"{raw_mat} ({total_deduction})")
+                                    if deduction_log: msg += f" | 📉 Consumed: {', '.join(deduction_log)}"
+                        st.success(msg)
                         st.rerun()
                     else:
-                        st.error("Failed to log.")
+                        st.error("Failed to log transaction.")
 
         with col_add:
             st.markdown("### ➕ Add New Stock Item")
             st.caption("Use this to create new items in the Master Sheet.")
             with st.form("new_item_form"):
-                new_name = st.text_input("Item Name (e.g. DWLR)")
+                new_name = st.text_input("Item Name (e.g. DWLR, ESP32)")
                 new_cat = st.selectbox("Category", ["Finished Good", "Raw Material", "Accessory"])
-                
                 if st.form_submit_button("Add Item to DB"):
                     if new_name:
                         if add_stock_item(new_name, new_cat):
                             st.success(f"Added '{new_name}' to Stock Master!")
                             st.rerun()
-                        else:
-                            st.warning("Item might already exist.")
-                    else:
-                        st.error("Name required.")
+                        else: st.warning("Item might already exist.")
+                    else: st.error("Name required.")
         
-        # 3. HISTORY
         with st.expander("📜 View Transaction History"):
             if not trans_df.empty:
                 st.dataframe(trans_df.sort_values(by=["Date", "Time"], ascending=False), use_container_width=True)
+
+    elif menu == "Product Recipes (BOM)":
+        st.subheader("🛠️ Product Recipes (Bill of Materials)")
+        st.markdown("Map multiple **Raw Materials** to a **Finished Product** in one go.")
+        
+        if stock_df.empty:
+            st.warning("⚠️ You need to add items to your Stock Master (Inventory Manager) first.")
+        else:
+            if "Category" in stock_df.columns:
+                finished_goods = stock_df[stock_df["Category"] == "Finished Good"]["Item Name"].tolist()
+                raw_materials = stock_df[stock_df["Category"].isin(["Raw Material", "Accessory"])]["Item Name"].tolist()
+                if not finished_goods: finished_goods = stock_df["Item Name"].tolist()
+                if not raw_materials: raw_materials = stock_df["Item Name"].tolist()
+            else:
+                finished_goods = stock_df["Item Name"].tolist()
+                raw_materials = stock_df["Item Name"].tolist()
+
+            c_prod, c_btn = st.columns([3, 1])
+            with c_prod:
+                sel_prod = st.selectbox("Select Finished Product (Parent)", sorted(finished_goods))
+            
+            st.write("👇 **Add Raw Materials below:** (Click '+T' to add rows)")
+            input_df = pd.DataFrame(columns=["Raw Material Name", "Qty Needed Per Unit"])
+            
+            edited_df = st.data_editor(
+                input_df,
+                column_config={
+                    "Raw Material Name": st.column_config.SelectboxColumn("Raw Material", width="medium", options=sorted(raw_materials), required=True),
+                    "Qty Needed Per Unit": st.column_config.NumberColumn("Quantity", min_value=0.01, step=0.1, required=True)
+                },
+                num_rows="dynamic", use_container_width=True, hide_index=True
+            )
+            
+            with c_btn:
+                st.write(""); st.write("") 
+                if st.button("💾 Save Entire Recipe", type="primary"):
+                    if edited_df.empty: st.warning("Please add at least one material.")
+                    else:
+                        save_df = edited_df.copy()
+                        save_df = save_df[save_df["Raw Material Name"].notna() & (save_df["Raw Material Name"] != "")]
+                        if save_df.empty: st.warning("Rows cannot be empty.")
+                        else:
+                            save_df["Product Name"] = sel_prod
+                            final_df = save_df[["Product Name", "Raw Material Name", "Qty Needed Per Unit"]]
+                            if bulk_append_to_sheet("BOM_Mapping", final_df):
+                                st.success(f"✅ Successfully mapped {len(final_df)} materials to '{sel_prod}'!")
+                                st.rerun()
+                            else: st.error("Failed to save to database.")
+
+            st.divider()
+            st.markdown("### 📋 Current Recipes")
+            if not bom_df.empty:
+                filter_prod = st.selectbox("Filter View by Product", ["All"] + sorted(bom_df["Product Name"].unique().tolist()))
+                display_df = bom_df
+                if filter_prod != "All": display_df = bom_df[bom_df["Product Name"] == filter_prod]
+                st.dataframe(display_df, use_container_width=True)
+            else: st.info("No recipes created yet.")
 
     elif menu == "SIM Manager":
         st.subheader("📶 SIM Inventory")
@@ -726,9 +811,7 @@ def main():
         st.dataframe(sim_df, use_container_width=True)
 
     elif menu == "New Dispatch Entry":
-        st.subheader("📝 New Dispatch")
-        
-        # --- FIXED LAYOUT ---
+        st.subheader("📝 New Dispatch & Warranty Registration")
         st.markdown("### 🛠️ Device & Network")
         c1, c2, c3, c4 = st.columns(4)
         
@@ -737,25 +820,31 @@ def main():
             oem = st.text_input("OEM S/N", key="oem_in")
             
         with c2:
-            # --- STOCK INTEGRATION HERE ---
-            stock_map = get_stock_levels() 
-            product_options = []
-            clean_name_map = {}
+            prod_filter = st.text_input("Product Family (Filter)", key="prod_in", placeholder="Type to search (e.g. DWLR)")
+            stock_map = get_stock_levels()
+            all_stock_items = list(stock_map.keys())
+            matching_models = []
+            if not prod_df.empty and prod_filter:
+                hist_models = prod_df[prod_df["Product Name"].str.contains(prod_filter, case=False, na=False)]["Model"].unique().tolist()
+                matching_models.extend(hist_models)
+            if prod_filter:
+                stock_matches = [item for item in all_stock_items if prod_filter.lower() in item.lower()]
+                matching_models.extend(stock_matches)
+            matching_models = sorted(list(set(matching_models)))
+            if not prod_filter: matching_models = sorted(all_stock_items)
+
+            model_opts = ["Select..."] + matching_models + ["➕ New Model..."]
+            model_sel = st.selectbox("Model / Stock Item", model_opts, key="model_sel")
             
-            # Combine stock items with base list to ensure everything is covered
-            all_items = set(list(stock_map.keys()) + BASE_PRODUCT_LIST)
-            
-            for item in sorted(all_items):
-                qty = stock_map.get(item, 0)
-                # Show label like: "DWLR (Stock: 5)" or "DWLR (Stock: -2 Backlog)"
-                label = f"{item} (Stock: {qty})"
-                product_options.append(label)
-                clean_name_map[label] = item
-            
-            prod_label = st.selectbox("Product Name", product_options, key="prod_in")
-            # Extract clean name for DB
-            prod = clean_name_map.get(prod_label, prod_label.split(" (")[0])
-            model = st.text_input("Model", key="model_in")
+            final_model_name = ""
+            if model_sel == "➕ New Model...":
+                final_model_name = st.text_input("Enter New Model Name", key="model_new")
+                st.caption("⚠️ This will be a new item (Stock: 0)")
+            elif model_sel != "Select...":
+                final_model_name = model_sel
+                qty = stock_map.get(final_model_name, 0)
+                if qty > 0: st.caption(f"✅ In Stock: {qty}")
+                else: st.caption(f"⚠️ Stock: {qty} (Backlog)")
             
         with c3:
             conn = st.selectbox("Connectivity", ["4G", "2G", "NB-IoT", "WiFi", "LoRaWAN"], key="conn_in")
@@ -771,8 +860,7 @@ def main():
             if sim_sel == "➕ Add New...":
                 sim_man = st.text_input("New SIM Number", key="sim_man_in")
                 sim_prov = st.selectbox("Provider", ["VI", "AIRTEL", "JIO", "BSNL"], key="sim_prov_in")
-            elif sim_sel != "None":
-                sim_man = sim_sel
+            elif sim_sel != "None": sim_man = sim_sel
 
         st.divider()
         st.markdown("### 👥 Client & Partner")
@@ -795,33 +883,43 @@ def main():
 
         with col_d:
             install_d = st.date_input("Installation Date", key="d_inst")
-            valid = st.number_input("Validity", 1, 60, 12, key="d_valid")
+            valid = st.number_input("Validity (Months)", 1, 60, 12, key="d_valid")
             activ_d = st.date_input("Activation Date", key="d_activ")
 
         st.markdown("---")
+        
         if st.button("💾 Save Dispatch Entry", type="primary", use_container_width=True):
-            if not sn or not client:
-                st.error("S/N and Client Required!")
+            if not sn or not client or not final_model_name:
+                st.error("⚠️ Error: S/N, Model, and Client Name are required!")
             elif sn in prod_df["S/N"].values:
-                st.error("S/N Exists!")
+                st.error("⚠️ Error: This S/N already exists in the database!")
             else:
                 renew_date = calculate_renewal(activ_d, valid)
+                # FIX: Dates formatted to dd-mm-yyyy
                 new_prod = {
-                    "S/N": sn, "OEM S/N": oem, "Product Name": prod, "Model": model, "Connectivity (2G/4G)": conn,
-                    "Cable Length": cable, "Installation Date": str(install_d), "Activation Date": str(activ_d),
-                    "Validity (Months)": valid, "Renewal Date": str(renew_date),
+                    "S/N": sn, "OEM S/N": oem, 
+                    "Product Name": prod_filter if prod_filter else final_model_name,
+                    "Model": final_model_name, 
+                    "Connectivity (2G/4G)": conn,
+                    "Cable Length": cable, 
+                    "Installation Date": install_d.strftime("%d-%m-%Y"), 
+                    "Activation Date": activ_d.strftime("%d-%m-%Y"),
+                    "Validity (Months)": valid, 
+                    "Renewal Date": renew_date.strftime("%d-%m-%Y"),
                     "Device UID": uid, "SIM Number": sim_man, "SIM Provider": sim_prov,
                     "Channel Partner": partner, "End User": client, "Industry Category": industry
                 }
+                
                 if append_to_sheet("Products", new_prod):
-                    # --- AUTO DEDUCT STOCK ---
-                    log_transaction(prod, -1, "Dispatch", f"To: {client} | SN: {sn}", st.session_state.user_name)
-                    
+                    log_transaction(final_model_name, -1, "Dispatch (Out)", f"To: {client} | SN: {sn}", st.session_state.user_name)
                     if c_sel == "➕ Create...": append_to_sheet("Clients", {"Client Name": client})
                     if sim_man:
                         if sim_man in sim_df["SIM Number"].values: update_sim_status(sim_man, "Used", sn)
                         else: append_to_sheet("Sims", {"SIM Number": sim_man, "Provider": sim_prov, "Status": "Used", "Used In S/N": sn})
-                    st.success(f"Saved & Stock Updated for {prod}!"); st.rerun()
+                    st.success(f"✅ Success! {final_model_name} dispatched to {client}. Stock deducted.")
+                    st.balloons()
+                    import time; time.sleep(2); st.rerun()
+                else: st.error("Failed to save to database.")
 
     elif menu == "Subscription Manager":
         st.subheader("🔄 Subscription & Quotation Manager")
@@ -832,17 +930,13 @@ def main():
             if exp_df.empty: st.success("No devices need renewal.")
             else:
                 tab_s, tab_b = st.tabs(["📱 Individual", "🏢 Bulk"])
-                
-                # --- INDIVIDUAL ---
                 with tab_s:
                     exp_df['Label'] = exp_df['S/N'] + " | " + exp_df['End User']
                     sel_lbl = st.selectbox("Select Device", exp_df['Label'].tolist())
                     sel_sn = sel_lbl.split(" | ")[0]
                     row = exp_df[exp_df['S/N'] == sel_sn].iloc[0]
-                    
                     st.info(f"Product: {row['Product Name']} | Expires: {row['Renewal Date']}")
                     
-                    # QUOTE PERMISSION CHECK
                     if can_generate_quote:
                         with st.expander("📄 Generate Quote"):
                             with st.form("sq"):
@@ -855,7 +949,6 @@ def main():
                                         if not m.empty: c_det = m.iloc[0].to_dict()
                                     st.session_state['sq_data'] = {"c": c_det, "d": [{"sn": sel_sn, "product": row['Product Name'], "model": row.get('Model',''), "renewal": row['Renewal Date']}], "r": rate, "v": valid}
                                     st.success("Ready!")
-                        
                         if 'sq_data' in st.session_state:
                             with st.expander("📧 Email"):
                                 q = st.session_state['sq_data']
@@ -867,29 +960,26 @@ def main():
                                     if send_email_with_attachment(to, q['c'].get('Client Name', 'Unknown'), sel_sn, sub, body, pdf, "Quote.pdf", email_type="Single"):
                                         st.success("Sent!"); del st.session_state['sq_data']
                     
-                    # RENEWAL PERMISSION CHECK
                     st.write("---")
                     st.markdown("### 📅 Update Subscription")
                     with st.form("sr"):
                         new_st = st.date_input("New Start", date.today())
                         dur = st.number_input("Months", 12)
-                        
                         if can_direct_renew:
                             if st.form_submit_button("✅ Update Database"):
                                 end = calculate_renewal(new_st, dur)
-                                if update_product_subscription(sel_sn, str(new_st), dur, str(end)): st.success("Updated!"); st.rerun()
+                                # FIX: Date formatting
+                                if update_product_subscription(sel_sn, new_st.strftime("%d-%m-%Y"), dur, end.strftime("%d-%m-%Y")): st.success("Updated!"); st.rerun()
                         else:
                             if st.form_submit_button("✋ Request Renewal"):
                                 if submit_renewal_request([sel_sn], new_st, dur, st.session_state.user_name):
                                     st.success("Request Submitted to Admin!"); st.rerun()
 
-                # --- BULK ---
                 with tab_b:
                     cl_list = get_clean_list(exp_df, "End User")
                     sel_cl = st.selectbox("Select Client", cl_list)
                     devs = exp_df[exp_df["End User"] == sel_cl]
                     st.dataframe(devs[["S/N", "Product Name", "Renewal Date"]])
-                    
                     if can_generate_quote:
                         with st.expander("📄 Generate Bulk Quote"):
                             with st.form("bq"):
@@ -904,7 +994,6 @@ def main():
                                     for _, r in devs.iterrows(): d_list.append({"sn": r['S/N'], "product": r['Product Name'], "model": r.get('Model',''), "renewal": r['Renewal Date']})
                                     st.session_state['bq_data'] = {"c": c_det, "d": d_list, "r": rate, "v": valid}
                                     st.success("Ready!")
-                        
                         if 'bq_data' in st.session_state:
                             with st.expander("📧 Email Bulk"):
                                 q = st.session_state['bq_data']
@@ -922,13 +1011,13 @@ def main():
                     with st.form("br"):
                         b_st = st.date_input("New Start", date.today())
                         b_dur = st.number_input("Months", 12)
-                        
                         if can_direct_renew:
                             if st.form_submit_button("✅ Update ALL Devices"):
                                 end = calculate_renewal(b_st, b_dur)
                                 cnt = 0
                                 for sn in devs['S/N']: 
-                                    if update_product_subscription(sn, str(b_st), b_dur, str(end)): cnt+=1
+                                    # FIX: Date formatting
+                                    if update_product_subscription(sn, b_st.strftime("%d-%m-%Y"), b_dur, end.strftime("%d-%m-%Y")): cnt+=1
                                 st.success(f"Updated {cnt} devices!"); st.rerun()
                         else:
                             if st.form_submit_button("✋ Request Bulk Renewal"):
@@ -947,7 +1036,6 @@ def main():
         search_c = st.text_input("Search Clients")
         if search_c: st.dataframe(client_df[client_df.astype(str).apply(lambda x: x.str.contains(search_c, case=False)).any(axis=1)], use_container_width=True)
         else: st.dataframe(client_df, use_container_width=True)
-        
         cl_list = get_clean_list(client_df, "Client Name")
         if cl_list:
             with st.expander("Edit Client"):
@@ -969,13 +1057,12 @@ def main():
             c1, c2 = st.columns([1, 2])
             with c1: st.dataframe(pc, use_container_width=True, hide_index=True)
             with c2: st.plotly_chart(px.bar(pc, x="Partner", y="Installations", color="Installations", text_auto=True), use_container_width=True)
-            
             sel_p = st.selectbox("Drill-Down", sorted(prod_df["Channel Partner"].unique()))
             if sel_p: st.dataframe(prod_df[prod_df["Channel Partner"] == sel_p], use_container_width=True)
 
     elif menu == "IMPORT/EXPORT DB":
         st.subheader("💾 Backup")
-        st.download_button("Download DB", convert_all_to_excel({"Products": prod_df, "Clients": client_df, "Sims": sim_df, "Stock": stock_df, "Transactions": trans_df}), "Backup.xlsx")
+        st.download_button("Download DB", convert_all_to_excel({"Products": prod_df, "Clients": client_df, "Sims": sim_df, "Stock": stock_df, "Transactions": trans_df, "BOM": bom_df}), "Backup.xlsx")
         st.divider()
         up = st.file_uploader("Bulk Import", type=['xlsx'])
         if up:
@@ -989,21 +1076,13 @@ def main():
     elif menu == "Email Logs":
         st.subheader("📨 Email History Log")
         search_term = st.text_input("🔍 Search Logs", placeholder="Subject, Recipient, or Date...")
-        
         if not email_df.empty:
-            if st.session_state.user_role != "Admin":
-                filtered_df = email_df[email_df["Sender"] == st.session_state.user_name]
-            else:
-                filtered_df = email_df
-            
-            if search_term:
-                filtered_df = filtered_df[filtered_df.astype(str).apply(lambda x: x.str.contains(search_term, case=False)).any(axis=1)]
-            
+            if st.session_state.user_role != "Admin": filtered_df = email_df[email_df["Sender"] == st.session_state.user_name]
+            else: filtered_df = email_df
+            if search_term: filtered_df = filtered_df[filtered_df.astype(str).apply(lambda x: x.str.contains(search_term, case=False)).any(axis=1)]
             st.dataframe(filtered_df, use_container_width=True)
-        else:
-            st.info("No email logs found.")
+        else: st.info("No email logs found.")
 
-    # --- ADMIN EXCLUSIVE TABS ---
     elif menu == "🔔 Approvals" and st.session_state.user_role == "Admin":
         st.subheader("🔔 Pending Renewal Requests")
         if not req_df.empty:
