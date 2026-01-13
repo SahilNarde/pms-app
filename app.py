@@ -58,8 +58,18 @@ COMPANY_INFO = {
 }
 
 # --- PERMISSION CONSTANTS ---
-# Added "Inventory Management" to tabs
-NAV_TABS = ["Dashboard", "Inventory Management", "SIM Manager", "New Dispatch Entry", "Subscription Manager", "Installation List", "Client Master", "Channel Partner Analytics", "Email Logs", "IMPORT/EXPORT DB"]
+NAV_TABS = [
+    "Dashboard", 
+    "Inventory Manager", # NEW TAB
+    "SIM Manager", 
+    "New Dispatch Entry", 
+    "Subscription Manager", 
+    "Installation List", 
+    "Client Master", 
+    "Channel Partner Analytics", 
+    "Email Logs", 
+    "IMPORT/EXPORT DB"
+]
 FUNC_PERMS = ["ACCESS: Generate Quote", "ACCESS: Direct Renewal"]
 ALL_OPTS = NAV_TABS + FUNC_PERMS
 
@@ -71,14 +81,6 @@ st.markdown(
     <style>
         [data-testid="stSidebar"] .block-container { padding-top: 1rem; padding-bottom: 1rem; }
         div[data-testid="column"] { align-items: center; }
-        /* Inventory Card Style */
-        .inv-card {
-            background-color: #f0f2f6;
-            padding: 15px;
-            border-radius: 10px;
-            text-align: center;
-            border: 1px solid #d1d5db;
-        }
     </style>
     """,
     unsafe_allow_html=True,
@@ -104,20 +106,20 @@ def get_worksheet(sheet_name, tab_name):
         try:
             return sh.worksheet(tab_name)
         except gspread.WorksheetNotFound:
-            # Auto-create missing tabs
+            # Auto-create sheets if missing
             if tab_name == "Renewal Requests":
                 return sh.add_worksheet(title="Renewal Requests", rows=100, cols=10)
             elif tab_name == "Email Logs":
                 ws = sh.add_worksheet(title="Email Logs", rows=100, cols=10)
                 ws.append_row(["Date", "Time", "Sender", "Recipient", "Client Name", "Product S/N", "Subject", "Type", "Status"])
                 return ws
-            elif tab_name == "Inventory":
-                ws = sh.add_worksheet(title="Inventory", rows=100, cols=10)
-                ws.append_row(["Product Name", "Model", "Current Stock", "Min Level", "Last Updated"])
+            elif tab_name == "Transactions":
+                ws = sh.add_worksheet(title="Transactions", rows=1000, cols=10)
+                ws.append_row(["Date", "Time", "Item Name", "Qty", "Type", "Reference", "User"])
                 return ws
-            elif tab_name == "Inventory Logs":
-                ws = sh.add_worksheet(title="Inventory Logs", rows=100, cols=10)
-                ws.append_row(["Date", "Time", "User", "Action", "Product", "Model", "Quantity", "Note"])
+            elif tab_name == "Stock_Master":
+                ws = sh.add_worksheet(title="Stock_Master", rows=100, cols=5)
+                ws.append_row(["Item Name", "Category", "Current Stock"])
                 return ws
             return None
     except Exception as e:
@@ -246,7 +248,6 @@ def log_email(to_email, client_name, product_sn, subject, email_type="Single"):
         if ws:
             ist = ZoneInfo("Asia/Kolkata")
             now = datetime.now(ist)
-            # Date, Time, Sender, Recipient, Client Name, Product S/N, Subject, Type, Status
             ws.append_row([
                 str(now.date()),
                 now.strftime("%H:%M:%S"),
@@ -260,65 +261,6 @@ def log_email(to_email, client_name, product_sn, subject, email_type="Single"):
             ])
     except Exception:
         pass
-
-# --- INVENTORY FUNCTIONS ---
-def update_inventory(product, model, qty, action, note=""):
-    """
-    Updates the Inventory Sheet and Logs the transaction.
-    action: "Stock In" or "Stock Out" or "Correction"
-    """
-    ws_inv = get_worksheet(SHEET_NAME, "Inventory")
-    ws_log = get_worksheet(SHEET_NAME, "Inventory Logs")
-    if not ws_inv or not ws_log: return False
-    
-    try:
-        # 1. Update Master Stock
-        data = ws_inv.get_all_values()
-        headers = data[0]
-        df = pd.DataFrame(data[1:], columns=headers)
-        
-        # Clean inputs
-        product = product.strip()
-        model = model.strip()
-        
-        # Check if product exists
-        mask = (df["Product Name"] == product) & (df["Model"] == model)
-        
-        if df[mask].empty and action == "Stock In":
-            # New Item
-            ws_inv.append_row([product, model, str(qty), "10", str(date.today())])
-        elif not df[mask].empty:
-            # Update Existing
-            row_idx = df.index[mask][0] + 2 # +2 for 1-based index and header
-            current_qty = int(df.loc[mask, "Current Stock"].values[0])
-            
-            if action == "Stock In":
-                new_qty = current_qty + int(qty)
-            elif action in ["Stock Out", "Correction"]:
-                new_qty = current_qty - int(qty)
-                
-            ws_inv.update_cell(row_idx, headers.index("Current Stock")+1, str(new_qty))
-            ws_inv.update_cell(row_idx, headers.index("Last Updated")+1, str(date.today()))
-        
-        # 2. Log Transaction
-        ist = ZoneInfo("Asia/Kolkata")
-        now = datetime.now(ist)
-        ws_log.append_row([
-            str(now.date()),
-            now.strftime("%H:%M:%S"),
-            st.session_state.get('user_name', 'System'),
-            action,
-            product,
-            model,
-            str(qty),
-            note
-        ])
-        
-        load_data.clear() # clear cache
-        return True
-    except Exception as e:
-        st.error(f"Inventory Error: {e}")
-        return False
 
 # --- EMAIL FUNCTION ---
 def format_email_body_html(text):
@@ -336,17 +278,21 @@ def send_email_with_attachment(to_email, client_name, product_sn, subject, body,
         msg['From'] = email_conf["sender_email"]
         msg['To'] = to_email
         msg['Subject'] = subject
+        
         html_body = format_email_body_html(body)
         msg.attach(MIMEText(html_body, 'html'))
+        
         if pdf_buffer:
             part = MIMEApplication(pdf_buffer.read(), Name=filename)
             part['Content-Disposition'] = f'attachment; filename="{filename}"'
             msg.attach(part)
+            
         server = smtplib.SMTP(email_conf["smtp_server"], email_conf["smtp_port"])
         server.starttls()
         server.login(email_conf["sender_email"], email_conf["app_password"])
         server.sendmail(email_conf["sender_email"], to_email, msg.as_string())
         server.quit()
+        
         log_email(to_email, client_name, product_sn, subject, email_type)
         return True
     except Exception as e:
@@ -442,6 +388,70 @@ def update_client_details(original_name, updated_data):
     except Exception: return False
     return False
 
+# --- STOCK & INVENTORY FUNCTIONS ---
+def get_stock_levels():
+    """Fetches stock levels from Stock_Master sheet to show in dropdowns."""
+    df = load_data("Stock_Master")
+    if df.empty or "Item Name" not in df.columns or "Current Stock" not in df.columns:
+        return {}
+    
+    stock_dict = {}
+    for _, row in df.iterrows():
+        try:
+            # Handle possible float/int values in strings
+            val = float(row["Current Stock"]) if row["Current Stock"] else 0
+            stock_dict[row["Item Name"]] = int(val)
+        except:
+            stock_dict[row["Item Name"]] = 0
+    return stock_dict
+
+def log_transaction(item_name, qty, trans_type, reference, user):
+    """Appends a row to the Transactions sheet."""
+    ist = ZoneInfo("Asia/Kolkata")
+    now = datetime.now(ist)
+    
+    data = {
+        "Date": str(now.date()),
+        "Time": now.strftime("%H:%M:%S"),
+        "Item Name": item_name,
+        "Qty": qty,            
+        "Type": trans_type,    
+        "Reference": reference,
+        "User": user
+    }
+    return append_to_sheet("Transactions", data)
+
+def add_stock_item(item_name, category):
+    """
+    Adds a new item to Stock_Master AND inserts the formula.
+    Formula: =SUMIF(Transactions!C:C, A{row}, Transactions!D:D)
+    Assuming Item Name is Col A (1) and Current Stock is Col C (3).
+    """
+    ws = get_worksheet(SHEET_NAME, "Stock_Master")
+    if not ws: return False
+    
+    # Check if item exists
+    try:
+        if ws.find(item_name):
+            return False # Item exists
+    except:
+        pass # Item not found, safe to add
+        
+    # Calculate next row number (1 header + current rows + 1 for new row)
+    next_row = len(ws.get_all_values()) + 1
+    
+    # The Formula
+    # Transactions!C:C is Item Name column in Transactions
+    # Transactions!D:D is Qty column in Transactions
+    formula = f"=SUMIF(Transactions!C:C, A{next_row}, Transactions!D:D)"
+    
+    # Append row with user_entered option to parse formula
+    # [Item Name, Category, Current Stock (Formula)]
+    ws.append_row([item_name, category, formula], value_input_option='USER_ENTERED')
+    load_data.clear()
+    return True
+
+# --- RENEWAL LOGIC ---
 def submit_renewal_request(sn_list, new_start, duration, requested_by):
     req_id = str(uuid.uuid4())[:8]
     data = {
@@ -501,6 +511,7 @@ def convert_all_to_excel(dfs_dict):
             df.to_excel(writer, sheet_name=sheet_name, index=False)
     return output.getvalue()
 
+# --- AUTH ---
 def check_login(username, password):
     ws = get_worksheet(SHEET_NAME, "Credentials")
     if not ws: return None
@@ -584,23 +595,24 @@ def main():
         prod_df = load_data("Products")
         client_df = load_data("Clients")
         sim_df = load_data("Sims")
-        inv_df = load_data("Inventory")
         req_df = load_data("Renewal Requests") if st.session_state.user_role == "Admin" else pd.DataFrame()
         email_df = load_data("Email Logs")
+        stock_df = load_data("Stock_Master")
+        trans_df = load_data("Transactions")
 
+        # Fallback headers if sheets are empty
         if prod_df.empty or "S/N" not in prod_df.columns:
             prod_df = pd.DataFrame(columns=["S/N", "End User", "Product Name", "Model", "Renewal Date", "Industry Category", "Installation Date", "Activation Date", "Validity (Months)", "Channel Partner", "Device UID", "Connectivity (2G/4G)", "Cable Length", "SIM Number", "SIM Provider"])
         if client_df.empty or "Client Name" not in client_df.columns:
             client_df = pd.DataFrame(columns=["Client Name", "Email", "Phone Number", "Contact Person", "Address"])
         if sim_df.empty or "SIM Number" not in sim_df.columns:
             sim_df = pd.DataFrame(columns=["SIM Number", "Status", "Provider", "Plan Details", "Entry Date", "Used In S/N"])
-        if inv_df.empty or "Product Name" not in inv_df.columns:
-            inv_df = pd.DataFrame(columns=["Product Name", "Model", "Current Stock", "Min Level", "Last Updated"])
 
         with stats_placeholder.container():
             st.caption(f"📦 Products: {len(prod_df)}")
             st.caption(f"👥 Clients: {len(client_df)}")
             st.caption(f"📶 SIMs: {len(sim_df)}")
+            st.caption(f"🧱 Stock Items: {len(stock_df) if not stock_df.empty else 0}")
 
     except Exception:
         st.error("Connection Error. Data could not be loaded."); return
@@ -638,74 +650,70 @@ def main():
             with t1: st.dataframe(prod_df[prod_df['Status_Calc']=="Expiring Soon"], use_container_width=True)
             with t2: st.dataframe(prod_df[prod_df['Status_Calc']=="Expired"], use_container_width=True)
 
-    elif menu == "Inventory Management":
-        st.subheader("📦 Professional Inventory Management")
+    elif menu == "Inventory Manager":
+        st.subheader("📦 Stock Availability Tracker")
         
-        # TABS
-        tab_view, tab_in, tab_log = st.tabs(["📊 Stock Overview", "📥 Stock In / Adjust", "📜 Transaction Logs"])
-        
-        with tab_view:
-            # KPIS
-            total_items = pd.to_numeric(inv_df["Current Stock"], errors='coerce').sum()
-            low_stock = inv_df[pd.to_numeric(inv_df["Current Stock"], errors='coerce') < pd.to_numeric(inv_df["Min Level"], errors='coerce')]
-            
-            k1, k2, k3 = st.columns(3)
-            k1.metric("Total Items in Stock", int(total_items))
-            k2.metric("Low Stock Alerts", len(low_stock), delta_color="inverse")
-            k3.metric("Product Types", len(inv_df))
-            st.divider()
-            
-            # MAIN TABLE
-            st.markdown("### 📋 Current Stock Levels")
-            
-            # Color coding logic
-            def color_stock(val):
+        # 1. LIVE STOCK KPI
+        st.markdown("### 📊 Live Stock Levels")
+        if not stock_df.empty:
+            # Color logic: Red if < 0 (Backlog), Green if > 0, Gray if 0
+            def highlight_stock(val):
                 try:
-                    qty = int(val["Current Stock"])
-                    limit = int(val["Min Level"])
-                    if qty <= 0: return ['background-color: #ffcccc'] * len(val)
-                    elif qty < limit: return ['background-color: #fff4cc'] * len(val)
-                    else: return ['background-color: #ccffcc'] * len(val)
-                except: return [''] * len(val)
-
-            st.dataframe(inv_df.style.apply(color_stock, axis=1), use_container_width=True)
+                    v = int(val)
+                    if v < 0: return 'background-color: #ffcccc; color: #990000; font-weight: bold'
+                    elif v > 0: return 'background-color: #ccffcc; color: #006600'
+                except: pass
+                return ''
             
-            if not low_stock.empty:
-                st.error(f"⚠️ Low Stock Alert: {', '.join(low_stock['Product Name'].tolist())}")
+            # Show formatted dataframe
+            st.dataframe(stock_df.style.map(highlight_stock, subset=['Current Stock']), use_container_width=True)
+        else:
+            st.info("Stock list is empty. Add items below.")
 
-        with tab_in:
-            st.markdown("### 📥 Add Stock / Procurement")
-            with st.form("stock_in"):
-                c1, c2 = st.columns(2)
-                p_name = c1.selectbox("Product", BASE_PRODUCT_LIST)
-                p_model = c2.text_input("Model")
-                qty = c1.number_input("Quantity", min_value=1, value=10)
-                note = c2.text_input("Source / PO Number")
+        st.divider()
+
+        # 2. TRANSACTION FORM
+        col_trans, col_add = st.columns([1.5, 1])
+
+        with col_trans:
+            st.markdown("### 📝 Record Transaction")
+            with st.form("trans_form"):
+                item_list = stock_df["Item Name"].tolist() if not stock_df.empty else []
+                t_item = st.selectbox("Select Item", item_list)
+                t_type = st.selectbox("Type", ["Production (In)", "Purchase (In)", "Return (In)", "Damaged (Out)", "Manual Adjustment"])
+                t_qty = st.number_input("Quantity", min_value=1, value=1)
+                t_ref = st.text_input("Reference / Note", placeholder="e.g. PO-1234")
                 
-                if st.form_submit_button("➕ Add Stock"):
-                    if update_inventory(p_name, p_model, qty, "Stock In", note):
-                        st.success(f"Added {qty} {p_name} to Inventory")
+                if st.form_submit_button("💾 Log Transaction"):
+                    # Calculate + or -
+                    final_qty = t_qty if "In" in t_type else -t_qty
+                    if log_transaction(t_item, final_qty, t_type, t_ref, st.session_state.user_name):
+                        st.success(f"Logged: {t_item} ({final_qty})")
                         st.rerun()
-            
-            st.divider()
-            st.markdown("### 🛠️ Manual Adjustment (Correction)")
-            with st.expander("Open Correction Form"):
-                with st.form("adj"):
-                    c1, c2 = st.columns(2)
-                    exist_prod = c1.selectbox("Select Product", inv_df["Product Name"].unique())
-                    # Filter models based on product? (Simplified for now)
-                    exist_mod = c2.text_input("Model Name (Exact)")
-                    adj_qty = c1.number_input("Quantity to Remove", min_value=1)
-                    reason = c2.text_input("Reason")
-                    if st.form_submit_button("Update Stock"):
-                        if update_inventory(exist_prod, exist_mod, adj_qty, "Correction", reason):
-                            st.success("Stock Adjusted")
-                            st.rerun()
+                    else:
+                        st.error("Failed to log.")
 
-        with tab_log:
-            st.markdown("### 📜 Movement History")
-            log_df = load_data("Inventory Logs")
-            st.dataframe(log_df, use_container_width=True)
+        with col_add:
+            st.markdown("### ➕ Add New Stock Item")
+            st.caption("Use this to create new items in the Master Sheet.")
+            with st.form("new_item_form"):
+                new_name = st.text_input("Item Name (e.g. DWLR)")
+                new_cat = st.selectbox("Category", ["Finished Good", "Raw Material", "Accessory"])
+                
+                if st.form_submit_button("Add Item to DB"):
+                    if new_name:
+                        if add_stock_item(new_name, new_cat):
+                            st.success(f"Added '{new_name}' to Stock Master!")
+                            st.rerun()
+                        else:
+                            st.warning("Item might already exist.")
+                    else:
+                        st.error("Name required.")
+        
+        # 3. HISTORY
+        with st.expander("📜 View Transaction History"):
+            if not trans_df.empty:
+                st.dataframe(trans_df.sort_values(by=["Date", "Time"], ascending=False), use_container_width=True)
 
     elif menu == "SIM Manager":
         st.subheader("📶 SIM Inventory")
@@ -719,6 +727,7 @@ def main():
 
     elif menu == "New Dispatch Entry":
         st.subheader("📝 New Dispatch")
+        
         # --- FIXED LAYOUT ---
         st.markdown("### 🛠️ Device & Network")
         c1, c2, c3, c4 = st.columns(4)
@@ -726,12 +735,32 @@ def main():
         with c1:
             sn = st.text_input("Product S/N (Required)", key="sn_in")
             oem = st.text_input("OEM S/N", key="oem_in")
+            
         with c2:
-            prod = st.selectbox("Product Name", BASE_PRODUCT_LIST, key="prod_in")
+            # --- STOCK INTEGRATION HERE ---
+            stock_map = get_stock_levels() 
+            product_options = []
+            clean_name_map = {}
+            
+            # Combine stock items with base list to ensure everything is covered
+            all_items = set(list(stock_map.keys()) + BASE_PRODUCT_LIST)
+            
+            for item in sorted(all_items):
+                qty = stock_map.get(item, 0)
+                # Show label like: "DWLR (Stock: 5)" or "DWLR (Stock: -2 Backlog)"
+                label = f"{item} (Stock: {qty})"
+                product_options.append(label)
+                clean_name_map[label] = item
+            
+            prod_label = st.selectbox("Product Name", product_options, key="prod_in")
+            # Extract clean name for DB
+            prod = clean_name_map.get(prod_label, prod_label.split(" (")[0])
             model = st.text_input("Model", key="model_in")
+            
         with c3:
             conn = st.selectbox("Connectivity", ["4G", "2G", "NB-IoT", "WiFi", "LoRaWAN"], key="conn_in")
             cable = st.text_input("Cable Length", key="cable_in")
+            
         with c4:
             uid = st.text_input("Device UID", key="uid_in")
             avail_sims = get_clean_list(sim_df[sim_df["Status"] == "Available"], "SIM Number")
@@ -785,11 +814,14 @@ def main():
                     "Channel Partner": partner, "End User": client, "Industry Category": industry
                 }
                 if append_to_sheet("Products", new_prod):
+                    # --- AUTO DEDUCT STOCK ---
+                    log_transaction(prod, -1, "Dispatch", f"To: {client} | SN: {sn}", st.session_state.user_name)
+                    
                     if c_sel == "➕ Create...": append_to_sheet("Clients", {"Client Name": client})
                     if sim_man:
                         if sim_man in sim_df["SIM Number"].values: update_sim_status(sim_man, "Used", sn)
                         else: append_to_sheet("Sims", {"SIM Number": sim_man, "Provider": sim_prov, "Status": "Used", "Used In S/N": sn})
-                    st.success("Saved!"); st.rerun()
+                    st.success(f"Saved & Stock Updated for {prod}!"); st.rerun()
 
     elif menu == "Subscription Manager":
         st.subheader("🔄 Subscription & Quotation Manager")
@@ -943,7 +975,7 @@ def main():
 
     elif menu == "IMPORT/EXPORT DB":
         st.subheader("💾 Backup")
-        st.download_button("Download DB", convert_all_to_excel({"Products": prod_df, "Clients": client_df, "Sims": sim_df}), "Backup.xlsx")
+        st.download_button("Download DB", convert_all_to_excel({"Products": prod_df, "Clients": client_df, "Sims": sim_df, "Stock": stock_df, "Transactions": trans_df}), "Backup.xlsx")
         st.divider()
         up = st.file_uploader("Bulk Import", type=['xlsx'])
         if up:
